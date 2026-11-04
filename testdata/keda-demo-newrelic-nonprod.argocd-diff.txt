@@ -1,0 +1,335 @@
+
+===== keda.sh/ScaledObject /keda-demo-newrelic ======
+0a1,38
+> apiVersion: keda.sh/v1alpha1
+> kind: ScaledObject
+> metadata:
+>   annotations:
+>     argocd.argoproj.io/tracking-id: keda-demo-newrelic-nonprod:keda.sh/ScaledObject:nonprod/keda-demo-newrelic
+>     helm.sh/chart: app-0.17.1
+>   labels:
+>     app.kubernetes.io/instance: keda-demo-newrelic-nonprod
+>     app.kubernetes.io/managed-by: Helm
+>     app.kubernetes.io/name: keda-demo-newrelic
+>     app.kubernetes.io/version: 0.1.0
+>     argocd.argoproj.io/instance: keda-demo-newrelic-nonprod
+>     helm.sh/chart: app-0.17.1
+>   name: keda-demo-newrelic
+> spec:
+>   advanced:
+>     horizontalPodAutoscalerConfig:
+>       behavior:
+>         scaleDown:
+>           stabilizationWindowSeconds: 300
+>   cooldownPeriod: 300
+>   maxReplicaCount: 5
+>   minReplicaCount: 1
+>   pollingInterval: 60
+>   scaleTargetRef:
+>     name: keda-demo-newrelic
+>   triggers:
+>   - authenticationRef:
+>       kind: TriggerAuthentication
+>       name: keda-demo-newrelic-newrelic
+>     metadata:
+>       noDataError: "false"
+>       nrql: SELECT count(*) FROM Transaction WHERE (appName = 'keda-demo-newrelic')
+>         AND (transactionType = 'Web') SINCE 150 SECONDS AGO
+>       region: US
+>       threshold: "25"
+>     metricType: Value
+>     type: new-relic
+
+===== keda.sh/TriggerAuthentication /keda-demo-newrelic-newrelic ======
+0a1,22
+> apiVersion: keda.sh/v1alpha1
+> kind: TriggerAuthentication
+> metadata:
+>   annotations:
+>     argocd.argoproj.io/tracking-id: keda-demo-newrelic-nonprod:keda.sh/TriggerAuthentication:nonprod/keda-demo-newrelic-newrelic
+>     helm.sh/chart: app-0.17.1
+>   labels:
+>     app.kubernetes.io/instance: keda-demo-newrelic-nonprod
+>     app.kubernetes.io/managed-by: Helm
+>     app.kubernetes.io/name: keda-demo-newrelic
+>     app.kubernetes.io/version: 0.1.0
+>     argocd.argoproj.io/instance: keda-demo-newrelic-nonprod
+>     helm.sh/chart: app-0.17.1
+>   name: keda-demo-newrelic-newrelic
+> spec:
+>   secretTargetRef:
+>   - key: queryKey
+>     name: keda-demo-newrelic-nr-auth
+>     parameter: queryKey
+>   - key: account
+>     name: keda-demo-newrelic-nr-auth
+>     parameter: account
+
+===== /ConfigMap /keda-demo-newrelic-apm-app ======
+0a1,36
+> apiVersion: v1
+> data:
+>   package.json: |
+>     {
+>       "name": "keda-demo-newrelic",
+>       "private": true,
+>       "dependencies": {
+>         "express": "^4.21.2",
+>         "newrelic": "^12.8.0"
+>       }
+>     }
+>   server.js: |
+>     'use strict';
+>     require('newrelic');
+>     const express = require('express');
+>     const port = Number(process.env.PORT || 8080);
+>     const app = express();
+>     app.all('*', (_req, res) => {
+>       res.send('ok');
+>     });
+>     app.listen(port, () => {
+>       console.log('listening on ' + port);
+>     });
+> kind: ConfigMap
+> metadata:
+>   annotations:
+>     argocd.argoproj.io/tracking-id: keda-demo-newrelic-nonprod:/ConfigMap:nonprod/keda-demo-newrelic-apm-app
+>     helm.sh/chart: app-0.17.1
+>   labels:
+>     app.kubernetes.io/instance: keda-demo-newrelic-nonprod
+>     app.kubernetes.io/managed-by: Helm
+>     app.kubernetes.io/name: keda-demo-newrelic
+>     app.kubernetes.io/version: 0.1.0
+>     argocd.argoproj.io/instance: keda-demo-newrelic-nonprod
+>     helm.sh/chart: app-0.17.1
+>   name: keda-demo-newrelic-apm-app
+
+===== /Service /keda-demo-newrelic ======
+0a1,25
+> apiVersion: v1
+> kind: Service
+> metadata:
+>   annotations:
+>     argocd.argoproj.io/tracking-id: keda-demo-newrelic-nonprod:/Service:nonprod/keda-demo-newrelic
+>     helm.sh/chart: app-0.17.1
+>   labels:
+>     app.kubernetes.io/instance: keda-demo-newrelic-nonprod
+>     app.kubernetes.io/managed-by: Helm
+>     app.kubernetes.io/name: keda-demo-newrelic
+>     app.kubernetes.io/version: 0.1.0
+>     argocd.argoproj.io/instance: keda-demo-newrelic-nonprod
+>     helm.sh/chart: app-0.17.1
+>   name: keda-demo-newrelic
+> spec:
+>   ports:
+>   - name: http
+>     port: 8080
+>     protocol: TCP
+>     targetPort: 8080
+>   selector:
+>     app.kubernetes.io/instance: keda-demo-newrelic-nonprod
+>     app.kubernetes.io/name: keda-demo-newrelic
+>     app.kubernetes.io/version: 0.1.0
+>   type: ClusterIP
+
+===== apps/Deployment /keda-demo-newrelic ======
+0a1,144
+> apiVersion: apps/v1
+> kind: Deployment
+> metadata:
+>   annotations:
+>     argocd.argoproj.io/tracking-id: keda-demo-newrelic-nonprod:apps/Deployment:nonprod/keda-demo-newrelic
+>     helm.sh/chart: app-0.17.1
+>   labels:
+>     app.kubernetes.io/instance: keda-demo-newrelic-nonprod
+>     app.kubernetes.io/managed-by: Helm
+>     app.kubernetes.io/name: keda-demo-newrelic
+>     app.kubernetes.io/version: 0.1.0
+>     argocd.argoproj.io/instance: keda-demo-newrelic-nonprod
+>     helm.sh/chart: app-0.17.1
+>   name: keda-demo-newrelic
+> spec:
+>   selector:
+>     matchLabels:
+>       app.kubernetes.io/instance: keda-demo-newrelic-nonprod
+>       app.kubernetes.io/name: keda-demo-newrelic
+>       app.kubernetes.io/version: 0.1.0
+>   strategy:
+>     rollingUpdate:
+>       maxSurge: 100%
+>       maxUnavailable: 0
+>     type: RollingUpdate
+>   template:
+>     metadata:
+>       annotations:
+>         glueops.dev/chart: app
+>       labels:
+>         app.kubernetes.io/instance: keda-demo-newrelic-nonprod
+>         app.kubernetes.io/managed-by: Helm
+>         app.kubernetes.io/name: keda-demo-newrelic
+>         app.kubernetes.io/version: 0.1.0
+>     spec:
+>       containers:
+>       - args:
+>         - set -e && rm -rf /tmp/app && mkdir -p /tmp/app && cp /config/package.json
+>           /config/server.js /tmp/app/ && cd /tmp/app && npm install --omit=dev --no-audit
+>           --no-fund && exec node server.js
+>         command:
+>         - /bin/sh
+>         - -c
+>         env:
+>         - name: ENV_APP_NAME
+>           value: keda-demo-newrelic
+>         - name: ENV_APP_VERSION
+>           value: 0.1.0
+>         - name: ENV_APP_ENV
+>           value: dev
+>         - name: ENV_APP_PORT
+>           value: "8080"
+>         - name: ENV_NODE_NAME
+>           valueFrom:
+>             fieldRef:
+>               fieldPath: spec.nodeName
+>         - name: ENV_POD_NAME
+>           valueFrom:
+>             fieldRef:
+>               fieldPath: metadata.name
+>         - name: ENV_POD_NAMESPACE
+>           valueFrom:
+>             fieldRef:
+>               fieldPath: metadata.namespace
+>         - name: ENV_POD_IP
+>           valueFrom:
+>             fieldRef:
+>               fieldPath: status.podIP
+>         - name: NEW_RELIC_APP_NAME
+>           value: keda-demo-newrelic
+>         - name: PORT
+>           value: "8080"
+>         - name: NODE_ENV
+>           value: production
+>         - name: NEW_RELIC_LICENSE_KEY
+>           valueFrom:
+>             secretKeyRef:
+>               key: licenseKey
+>               name: keda-demo-newrelic-nr-auth
+>         - name: account
+>           valueFrom:
+>             secretKeyRef:
+>               key: account
+>               name: keda-demo-newrelic-nr-auth
+>         - name: licenseKey
+>           valueFrom:
+>             secretKeyRef:
+>               key: licenseKey
+>               name: keda-demo-newrelic-nr-auth
+>         - name: queryKey
+>           valueFrom:
+>             secretKeyRef:
+>               key: queryKey
+>               name: keda-demo-newrelic-nr-auth
+>         - name: v1
+>           valueFrom:
+>             secretKeyRef:
+>               key: v1
+>               name: keda-demo-newrelic-nr-auth
+>         envFrom: null
+>         image: docker.io/node:22-alpine
+>         imagePullPolicy: IfNotPresent
+>         livenessProbe:
+>           initialDelaySeconds: 120
+>           periodSeconds: 30
+>           tcpSocket:
+>             port: 8080
+>         name: keda-demo-newrelic
+>         ports:
+>         - containerPort: 8080
+>           name: http
+>           protocol: TCP
+>         readinessProbe:
+>           failureThreshold: 6
+>           initialDelaySeconds: 90
+>           periodSeconds: 10
+>           tcpSocket:
+>             port: 8080
+>         resources:
+>           limits:
+>             cpu: 500m
+>             memory: 384Mi
+>           requests:
+>             cpu: 50m
+>             memory: 128Mi
+>         volumeMounts:
+>         - mountPath: /config
+>           name: apm-app
+>           readOnly: true
+>       enableServiceLinks: true
+>       terminationGracePeriodSeconds: 60
+>       topologySpreadConstraints:
+>       - labelSelector:
+>           matchLabels:
+>             app.kubernetes.io/instance: keda-demo-newrelic-nonprod
+>             app.kubernetes.io/name: keda-demo-newrelic
+>             app.kubernetes.io/version: 0.1.0
+>         maxSkew: 1
+>         topologyKey: topology.kubernetes.io/zone
+>         whenUnsatisfiable: ScheduleAnyway
+>       volumes:
+>       - configMap:
+>           name: keda-demo-newrelic-apm-app
+>         name: apm-app
+
+===== external-secrets.io/ExternalSecret /keda-demo-newrelic-nr-auth ======
+0a1,52
+> apiVersion: external-secrets.io/v1
+> kind: ExternalSecret
+> metadata:
+>   annotations:
+>     argocd.argoproj.io/tracking-id: keda-demo-newrelic-nonprod:external-secrets.io/ExternalSecret:nonprod/keda-demo-newrelic-nr-auth
+>     helm.sh/chart: app-0.17.1
+>   labels:
+>     app.kubernetes.io/instance: keda-demo-newrelic-nonprod
+>     app.kubernetes.io/managed-by: Helm
+>     app.kubernetes.io/name: keda-demo-newrelic
+>     app.kubernetes.io/version: 0.1.0
+>     argocd.argoproj.io/instance: keda-demo-newrelic-nonprod
+>     helm.sh/chart: app-0.17.1
+>   name: keda-demo-newrelic-nr-auth
+> spec:
+>   data:
+>   - remoteRef:
+>       conversionStrategy: Default
+>       decodingStrategy: None
+>       key: secret/keda-demo-newrelic/nonprod
+>       metadataPolicy: None
+>       property: nrAccountId
+>     secretKey: account
+>   - remoteRef:
+>       conversionStrategy: Default
+>       decodingStrategy: None
+>       key: secret/keda-demo-newrelic/nonprod
+>       metadataPolicy: None
+>       property: nrLicenseKey
+>     secretKey: licenseKey
+>   - remoteRef:
+>       conversionStrategy: Default
+>       decodingStrategy: None
+>       key: secret/keda-demo-newrelic/nonprod
+>       metadataPolicy: None
+>       property: nrQueryKey
+>     secretKey: queryKey
+>   - remoteRef:
+>       conversionStrategy: Default
+>       decodingStrategy: None
+>       key: secret/keda-demo-newrelic-new
+>       metadataPolicy: None
+>       property: v1
+>     secretKey: v1
+>   refreshInterval: 60s
+>   secretStoreRef:
+>     kind: ClusterSecretStore
+>     name: vault-backend
+>   target:
+>     name: keda-demo-newrelic-nr-auth
+>     template:
+>       type: Opaque
