@@ -33,7 +33,8 @@ func ok(stdout string) Result { return Result{Code: 0, Stdout: []byte(stdout)} }
 
 func TestClientCommandLines(t *testing.T) {
 	s := &scripted{answers: map[string]Result{"": ok("[]")}}
-	c := Client{Runner: s}
+	conn := []string{"--server", "127.0.0.1:1", "--plaintext"}
+	c := Client{Runner: s, Conn: conn}
 	ctx := context.Background()
 	_, _ = c.ListApplicationSets(ctx)
 	_, _ = c.ListApplications(ctx)
@@ -42,12 +43,15 @@ func TestClientCommandLines(t *testing.T) {
 	c.Manifests(ctx, "x", &Override{Ref: discover.SourceRef{Position: 1}, Revision: "v0.18.0"})
 	c.Manifests(ctx, "y", &Override{Ref: discover.SourceRef{Single: true}, Revision: "0.18.0"})
 	want := [][]string{
-		{"appset", "list", "--core", "-o", "json"},
-		{"app", "list", "--core", "-o", "json"},
-		{"app", "diff", "x", "--core", "--revisions", "0.18.0", "--source-positions", "2", "--exit-code"},
-		{"app", "manifests", "x", "--core"},
-		{"app", "manifests", "x", "--core", "--revisions", "v0.18.0", "--source-positions", "1"},
-		{"app", "manifests", "y", "--core", "--revision", "0.18.0"},
+		{"appset", "list", "-o", "json"},
+		{"app", "list", "-o", "json"},
+		{"app", "diff", "x", "--revisions", "0.18.0", "--source-positions", "2", "--exit-code"},
+		{"app", "manifests", "x"},
+		{"app", "manifests", "x", "--revisions", "v0.18.0", "--source-positions", "1"},
+		{"app", "manifests", "y", "--revision", "0.18.0"},
+	}
+	for i := range want {
+		want[i] = append(want[i], conn...)
 	}
 	if !reflect.DeepEqual(s.calls, want) {
 		t.Errorf("calls:\n%v\nwant:\n%v", s.calls, want)
@@ -165,7 +169,7 @@ func (c *counting) Run(_ context.Context, _ ...string) Result {
 	return Result{Code: 0, Stdout: []byte("[]")}
 }
 
-func TestTransientCoreModeFailuresAreRetried(t *testing.T) {
+func TestTransientFailuresAreRetried(t *testing.T) {
 	bind := `{"level":"fatal","msg":"failed to listen: listen tcp 127.0.0.1:43731: bind: address already in use"}`
 	r := &counting{failures: 2, stderr: bind, code: 20}
 	if _, err := (Client{Runner: r}).ListApplications(context.Background()); err != nil || r.calls != 3 {

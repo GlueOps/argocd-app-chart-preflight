@@ -1,9 +1,9 @@
-// Package argocd is the only way this agent talks to Argo CD: the argocd CLI in
-// core mode, exec'd directly (no shell). Core mode runs the API server
-// in-process with the pod's ServiceAccount and hands renders to
-// argocd-repo-server — so the tenant repo credentials in play are Argo CD's
-// own, never ours. Subcommands used: appset list, app list, app diff,
-// app manifests, version. All read-only.
+// Package argocd is the only way this agent talks to Argo CD: the argocd CLI,
+// exec'd directly (no shell), against one local API server per run (see Server).
+// That server runs with the pod's ServiceAccount and hands renders to
+// argocd-repo-server, so the tenant repo credentials in play are Argo CD's own,
+// never ours. Subcommands used: appset list, app list, app manifests,
+// app diff (text diff only, off by default), version. All read-only.
 package argocd
 
 import (

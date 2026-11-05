@@ -1,7 +1,7 @@
 // Command argocd-app-chart-preflight is GlueOps' per-captain pre-bump gate for
 // the `app` Helm chart. One run renders every tenant Application at a target
-// chart revision through the cluster's own Argo CD (core mode, Argo CD's own
-// credentials), reports per ApplicationSet whether the bump is clean and, if
+// chart revision through the cluster's own Argo CD (one local API server per
+// run, Argo CD's own credentials), reports per ApplicationSet whether the bump is clean and, if
 // not, the exact old/new command/args items per container, writes the report
 // to a ConfigMap, POSTs it to the receiver, logs one summary line and exits 0
 // no matter what.
@@ -79,8 +79,22 @@ func run(lookup func(string) (string, bool), out io.Writer) (code int) {
 		home = filepath.Join(cfg.KubeconfigDir, "argocd-home")
 		_ = os.MkdirAll(home, 0o700)
 	}
+	server := &argocd.Server{Bin: cfg.ArgocdBin, Kubeconfig: kcPath, Home: home}
+	if err := server.Start(ctx); err != nil {
+		log.Error("local argocd server unavailable", "reason", logging.ReasonArgocdUnavailable, "error", err.Error())
+		agent.LogSummary(log, agent.Summary{RunID: agent.NewRunID(time.Now()), Status: agent.StatusInternalError, Reason: logging.ReasonArgocdUnavailable, Error: err.Error(), Duration: time.Since(start)})
+		summarized = true
+		return 0
+	}
+	defer server.Stop()
 	deps := agent.Deps{
-		Argocd:  argocd.Client{Runner: argocd.ExecRunner{Bin: cfg.ArgocdBin, Kubeconfig: kcPath, Home: home, Timeout: cfg.ArgocdTimeout}},
+		Argocd: argocd.Client{
+			Runner:   argocd.ExecRunner{Bin: cfg.ArgocdBin, Kubeconfig: kcPath, Home: home, Timeout: cfg.ArgocdTimeout},
+			Conn:     server.Conn(),
+			Recovery: server,
+			Retries:  3,
+			Backoff:  3 * time.Second,
+		},
 		Version: version,
 		Commit:  commit,
 	}
