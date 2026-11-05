@@ -123,6 +123,33 @@ All configuration is via environment variables (the platform chart renders them 
 | `DEV_MODE` | `false` | Print the YAML report to stdout after the summary line. |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error`. |
 
+## Load and limits
+
+Measured on venus with the real image in a pod at the chart's limits (500m CPU, 512Mi memory),
+concurrency 2, and throwaway Applications padded to real object sizes. Two full runs:
+
+| Apps rendered | Run time | Process memory peak | Failed checks |
+|---|---|---|---|
+| 14 | 10 s | not sampled | 0 |
+| 314 | 3.5 min | not sampled | 0 |
+| 717 | 7.2 min | 317 MiB | 0 |
+
+That is about 0.6 s per app, so the default 14-minute `RUN_TIMEOUT_MS` covers about 1,400 apps.
+Memory is only proven up to 717 apps. It rises through a run, so re-measure before relying on a
+larger captain. With no target set, nothing is rendered and a run costs almost nothing.
+
+Three design choices keep it this small, and each has a measured reason:
+
+- **One local API server per run.** `argocd --core` in every call cost about 42 API requests and
+  0.6 CPU-seconds a call, and listed every Application each time.
+- **Applications come from the Kubernetes API in pages.** `argocd app list -o json` OOM-killed a
+  512Mi pod 10 seconds into a 743-app run.
+- **Two renders, no `app diff`.** A chart bump always changes the `helm.sh/chart` label, so the diff
+  never came back clean (0 of 112 checks).
+
+If the repo-server restarts mid-run, the agent restarts its local server and retries. That was
+tested on venus with no app lost.
+
 ## Run it from a workstation (against a captain you can reach with kubectl)
 
 Copy your kubeconfig, set its context namespace to Argo CD's, point the agent at it and the `argocd`
