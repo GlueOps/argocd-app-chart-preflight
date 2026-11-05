@@ -206,23 +206,20 @@ func TestPreflightVerdicts(t *testing.T) {
 		{is("version"), ok(`{"client":{"Version":"v3.2.12"}}`)},
 		{is("appset", "list"), ok(jsonList(applicationSet(set, gitChartSrc("v0.17.1"))))},
 		{is("app", "list"), ok(jsonList(apps...))},
-		{hasApp("diff", "clean"), ok("")},
-		{hasApp("diff", "quoted"), fail(1, "", "===== apps/Deployment nonprod/quoted ======\n5c5\n< a\n---\n> b")},
+		{hasApp("manifests", "clean"), ok(deployment("clean", []any{"x"}))},
 		{hasApp("manifests", "quoted"), func(a []string) argocd.Result {
 			if withRevision(a) {
 				return argocd.Result{Code: 0, Stdout: []byte(deployment("quoted", []any{`"echo a: b"`, "x"}))}
 			}
 			return argocd.Result{Code: 0, Stdout: []byte(deployment("quoted", []any{"echo a: b", "x"}))}
 		}},
-		{hasApp("diff", "mapitem"), fail(1, "", "")},
 		{hasApp("manifests", "mapitem"), func(a []string) argocd.Result {
 			if withRevision(a) {
 				return argocd.Result{Code: 20, Stderr: []byte(`{"level":"fatal","msg":"rpc error: failed to execute helm template: deployment.args: every item must be a string (got map)"}`)}
 			}
 			return argocd.Result{Code: 0, Stdout: []byte(deployment("mapitem", []any{"map[a:b]"}))}
 		}},
-		{hasApp("diff", "flaky"), fail(20, `{"level":"fatal","msg":"dial tcp: connection refused"}`, "")},
-		{hasApp("diff", "noop"), fail(1, "", "")},
+		{hasApp("manifests", "flaky"), fail(20, `{"level":"fatal","msg":"dial tcp: connection refused"}`, "")},
 		{hasApp("manifests", "noop"), func(a []string) argocd.Result {
 			if withRevision(a) {
 				return argocd.Result{Code: 0, Stdout: []byte(deployment("noop", []any{""}))}
@@ -260,7 +257,7 @@ func TestPreflightVerdicts(t *testing.T) {
 	if m := appByName(g, "mapitem"); m.Status != schema.AppError || !strings.Contains(*m.Reason, "every item must be a string (got map)") || *m.SyncStatus != "OutOfSync" {
 		t.Errorf("mapitem = %+v", m)
 	}
-	if f := appByName(g, "flaky"); f.Status != schema.AppUnknown || *f.Reason != "dial tcp: connection refused" {
+	if f := appByName(g, "flaky"); f.Status != schema.AppUnknown || *f.Reason != "argocd app manifests (current) failed: dial tcp: connection refused" {
 		t.Errorf("flaky = %+v", f)
 	}
 	if d := appByName(g, "drifted"); d.Status != schema.AppUnknown || !strings.Contains(*d.Reason, "revision drift") {
@@ -273,10 +270,10 @@ func TestPreflightVerdicts(t *testing.T) {
 	if sa == nil || sa.Status != schema.GroupSkipped || sa.Apps[0].Name != "glueops-alerts" || sa.Apps[0].Namespace != "nonprod" || !strings.Contains(*sa.Apps[0].Reason, "needs X.Y.Z") {
 		t.Errorf("standalone = %+v", sa)
 	}
-	if s.called("manifests", "clean") {
-		t.Error("fast path: no renders for a clean app")
+	if s.called("diff", "clean") || s.called("diff", "quoted") {
+		t.Error("app diff runs only for the optional text diff")
 	}
-	if s.called("diff", "drifted") || s.called("diff", "platform") || s.called("diff", "glueops-alerts") {
+	if s.called("manifests", "drifted") || s.called("manifests", "platform") || s.called("manifests", "glueops-alerts") {
 		t.Error("drifted, platform and wrong-kind-target apps never hit the CLI")
 	}
 }
@@ -286,8 +283,8 @@ func TestPreflightGroupSkipUnknownAndStandalone(t *testing.T) {
 		{is("version"), ok("{}")},
 		{is("appset", "list"), ok(jsonList(applicationSet("git-set", gitChartSrc("v0.17.1")), applicationSet("helm-set", helmChartSrc("0.17.1"))))},
 		{is("app", "list"), ok(jsonList(application("g1", "git-set", []any{gitChartSrc("v0.17.1"), venusValuesSrc}, nil, ""), application("h1", "helm-set", []any{helmChartSrc("0.17.1"), venusValuesSrc}, nil, ""), application("solo", "", []any{helmChartSrc("0.17.1"), venusValuesSrc}, nil, "")))},
-		{hasApp("diff", "solo"), ok("")},
-		{hasApp("diff", "h1"), ok("")},
+		{hasApp("manifests", "solo"), ok(deployment("solo", []any{"x"}))},
+		{hasApp("manifests", "h1"), ok(deployment("h1", []any{"x"}))},
 	}}
 	c := cfg("0.18.0")
 	c.Targets = map[string]string{"git-set": ""}
@@ -308,8 +305,8 @@ func TestPreflightGroupSkipUnknownAndStandalone(t *testing.T) {
 	if g := byName(rep2.AppSets, "git-set"); g.Status != schema.GroupUnknown || !strings.Contains(*g.Apps[0].Reason, "needs a git ref such as v0.18.0") || rep2.Run.Status != schema.GroupUnknown {
 		t.Errorf("wrong-kind target: %+v run=%s", g, rep2.Run.Status)
 	}
-	if s.called("diff", "g1") {
-		t.Error("an unknown set never calls diff")
+	if s.called("manifests", "g1") {
+		t.Error("an unknown set never renders")
 	}
 }
 
@@ -318,8 +315,7 @@ func TestPreflightTimeoutsGarbledAndDiffText(t *testing.T) {
 		{is("version"), ok("{}")},
 		{is("appset", "list"), ok(jsonList(applicationSet(set, gitChartSrc("v0.17.1"))))},
 		{is("app", "list"), ok(jsonList(application("slow", set, []any{gitChartSrc("v0.17.1"), venusValuesSrc}, nil, ""), application("garbled", set, []any{gitChartSrc("v0.17.1"), venusValuesSrc}, nil, ""), application("texty", set, []any{gitChartSrc("v0.17.1"), venusValuesSrc}, nil, "")))},
-		{hasApp("diff", "slow"), timeout()},
-		{hasApp("diff", "garbled"), fail(1, "", "")},
+		{hasApp("manifests", "slow"), timeout()},
 		{hasApp("manifests", "garbled"), func(a []string) argocd.Result {
 			if withRevision(a) {
 				return argocd.Result{Code: 0, Stdout: []byte("a: b: c")}
@@ -343,7 +339,7 @@ func TestPreflightTimeoutsGarbledAndDiffText(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := byName(rep.AppSets, set)
-	if a := appByName(g, "slow"); a.Status != schema.AppUnknown || *a.Reason != "argocd app diff timed out" {
+	if a := appByName(g, "slow"); a.Status != schema.AppUnknown || *a.Reason != "argocd app manifests (current) timed out" {
 		t.Errorf("slow = %+v", a)
 	}
 	if a := appByName(g, "garbled"); a.Status != schema.AppUnknown || !strings.Contains(*a.Reason, "could not parse rendered manifests") {
@@ -386,7 +382,7 @@ func TestRunWritesConfigMapPostsYAMLAndLogsOneSummary(t *testing.T) {
 		{is("version"), ok("{}")},
 		{is("appset", "list"), ok(jsonList(applicationSet(set, gitChartSrc("v0.17.1"))))},
 		{is("app", "list"), ok(jsonList(application("clean", set, []any{gitChartSrc("v0.17.1"), venusValuesSrc}, nil, "")))},
-		{hasApp("diff", "clean"), ok("")},
+		{hasApp("manifests", "clean"), ok(deployment("clean", []any{"x"}))},
 	}}
 	c := cfg("v0.18.0")
 	c.IngestURL = srv.URL

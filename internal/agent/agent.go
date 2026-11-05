@@ -264,19 +264,9 @@ func CheckApp(ctx context.Context, cfg config.Config, cli argocd.Client, g *disc
 		return withStatus(r, schema.AppUnknown, fmt.Sprintf("revision drift from ApplicationSet: app pins %q, template pins %q", app.Chart.Revision, *g.CurrentRevision))
 	}
 
-	d := cli.Diff(ctx, app.Name, app.Chart.Ref, target)
-	switch {
-	case d.TimedOut:
-		return withStatus(r, schema.AppUnknown, "argocd app diff timed out")
-	case d.Code == 0:
-		return r // identical to live at the target revision
-	case d.Code != 1:
-		if argocd.ChartRenderErrorRE.Match(d.Stderr) {
-			return withStatus(r, schema.AppError, argocd.ChartErrorReason(d.Stderr))
-		}
-		return withStatus(r, schema.AppUnknown, argocd.StderrReason(d.Stderr))
-	}
-
+	// Two renders, no `app diff` first: a chart version bump always changes the
+	// helm.sh/chart label, so a diff against live never comes back clean and
+	// would only add a third call to every app.
 	oldR := cli.Manifests(ctx, app.Name, nil)
 	newR := cli.Manifests(ctx, app.Name, &argocd.Override{Ref: app.Chart.Ref, Revision: target})
 	if newR.Code != 0 && !newR.TimedOut && argocd.ChartRenderErrorRE.Match(newR.Stderr) {
@@ -304,9 +294,6 @@ func CheckApp(ctx context.Context, cfg config.Config, cli argocd.Client, g *disc
 	c := compare.Compare(oldT, newT)
 	r.Diff = c.Diff
 	r.OtherChanges = c.OtherChanges
-	if cfg.ArgocdDiffText {
-		r.ArgocdDiff = PodTemplateDiffText(string(d.Stdout), newT, 64*1024)
-	}
 	switch c.Impact {
 	case "":
 		r.Status = schema.AppOK
@@ -314,6 +301,11 @@ func CheckApp(ctx context.Context, cfg config.Config, cli argocd.Client, g *disc
 		r.Status = schema.AppOKNoopDiff
 	default:
 		r.Status = schema.AppDiff
+		if cfg.ArgocdDiffText {
+			if d := cli.Diff(ctx, app.Name, app.Chart.Ref, target); d.Code == 1 {
+				r.ArgocdDiff = PodTemplateDiffText(string(d.Stdout), newT, 64*1024)
+			}
+		}
 	}
 	return r
 }
