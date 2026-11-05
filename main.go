@@ -97,7 +97,11 @@ func run(lookup func(string) (string, bool), out io.Writer) (code int) {
 		}
 	}
 	if cfg.IngestURL != "" {
-		deps.Sender = send.New(send.Options{URL: cfg.IngestURL, Timeout: cfg.IngestTimeout, Retries: 2, UserAgent: "argocd-app-chart-preflight/" + version})
+		enc := send.EncodingGzip
+		if !cfg.IngestGzip {
+			enc = send.EncodingIdentity
+		}
+		deps.Sender = send.New(send.Options{URL: cfg.IngestURL, Timeout: cfg.IngestTimeout, Retries: 2, UserAgent: "argocd-app-chart-preflight/" + version, Encoding: enc})
 	}
 
 	code, rep := agent.Run(ctx, cfg, deps, log)

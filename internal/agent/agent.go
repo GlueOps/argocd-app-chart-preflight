@@ -142,9 +142,12 @@ func post(ctx context.Context, cfg config.Config, deps Deps, log *slog.Logger, y
 	if cfg.IngestURL == "" || deps.Sender == nil {
 		return "skipped"
 	}
-	body, err := send.Gzip(yamlText)
-	if err != nil {
-		return "failed: " + err.Error()
+	body := yamlText
+	if cfg.IngestGzip {
+		var err error
+		if body, err = send.Gzip(yamlText); err != nil {
+			return "failed: " + err.Error()
+		}
 	}
 	res := deps.Sender.Send(ctx, body)
 	if !res.OK() {

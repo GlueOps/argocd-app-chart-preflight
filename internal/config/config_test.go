@@ -67,3 +67,12 @@ func TestOtherSettings(t *testing.T) {
 		t.Error("array must be rejected")
 	}
 }
+
+func TestIngestGzip(t *testing.T) {
+	if c, _ := Load(env(map[string]string{"CAPTAIN_DOMAIN": domain})); !c.IngestGzip {
+		t.Error("INGEST_GZIP must default to true")
+	}
+	if c, _ := Load(env(map[string]string{"CAPTAIN_DOMAIN": domain, "INGEST_GZIP": "false"})); c.IngestGzip {
+		t.Error("INGEST_GZIP=false must disable gzip")
+	}
+}

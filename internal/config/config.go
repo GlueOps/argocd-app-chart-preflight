@@ -44,6 +44,8 @@ type Config struct {
 	IngestURL string
 	// IngestTimeout bounds the POST.
 	IngestTimeout time.Duration
+	// IngestGzip compresses the POST body (Content-Encoding: gzip); false sends the YAML as-is.
+	IngestGzip bool
 	// StatusConfigMap is the status ConfigMap name; "" disables the write.
 	StatusConfigMap string
 	// StatusNamespace overrides the pod's own namespace for the ConfigMap.
@@ -98,6 +100,9 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		errs = append(errs, err)
 	}
 	if c.DevMode, err = boolEnv(lookup, "DEV_MODE", false); err != nil {
+		errs = append(errs, err)
+	}
+	if c.IngestGzip, err = boolEnv(lookup, "INGEST_GZIP", true); err != nil {
 		errs = append(errs, err)
 	}
 	// INGEST_URL unset ⇒ the default receiver; set but empty ⇒ no POST (inventory-agent's contract).

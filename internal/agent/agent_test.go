@@ -390,6 +390,7 @@ func TestRunWritesConfigMapPostsYAMLAndLogsOneSummary(t *testing.T) {
 	}}
 	c := cfg("v0.18.0")
 	c.IngestURL = srv.URL
+	c.IngestGzip = true
 	c.StatusConfigMap = "app-chart-preflight-status"
 	c.StatusNamespace = "preflight"
 	d := deps(s)
