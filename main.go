@@ -82,7 +82,7 @@ func run(lookup func(string) (string, bool), out io.Writer) (code int) {
 		home = filepath.Join(cfg.KubeconfigDir, "argocd-home")
 		_ = os.MkdirAll(home, 0o700)
 	}
-	server := &argocd.Server{Bin: cfg.ArgocdBin, Kubeconfig: kcPath, Home: home}
+	server := &argocd.Server{Bin: cfg.ArgocdBin, Kubeconfig: kcPath, Home: home, Log: log}
 	if err := server.Start(ctx); err != nil {
 		log.Error("local argocd server unavailable", "reason", logging.ReasonArgocdUnavailable, "error", err.Error())
 		agent.LogSummary(log, agent.Summary{RunID: agent.NewRunID(time.Now()), Status: agent.StatusInternalError, Reason: logging.ReasonArgocdUnavailable, Error: err.Error(), Duration: time.Since(start)})

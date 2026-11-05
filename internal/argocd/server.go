@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -33,6 +34,7 @@ type Server struct {
 	Home         string
 	Env          []string // extra environment for the server process
 	StartTimeout time.Duration
+	Log          *slog.Logger // optional; restarts are logged
 
 	mu     sync.Mutex
 	port   int
@@ -81,6 +83,9 @@ func (s *Server) Recover(ctx context.Context, seen uint64) error {
 	}
 	s.stop()
 	s.gen++
+	if s.Log != nil {
+		s.Log.Warn("local argocd server lost, restarting", "restarts", s.gen)
+	}
 	return s.start(ctx)
 }
 
