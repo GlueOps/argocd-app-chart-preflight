@@ -96,11 +96,6 @@ func (c Client) ListApplicationSets(ctx context.Context) ([]map[string]any, erro
 	return c.listJSON(ctx, "appset", "list", "-o", "json")
 }
 
-// ListApplications runs `app list -o json`.
-func (c Client) ListApplications(ctx context.Context) ([]map[string]any, error) {
-	return c.listJSON(ctx, "app", "list", "-o", "json")
-}
-
 func (c Client) listJSON(ctx context.Context, args ...string) ([]map[string]any, error) {
 	r := c.run(ctx, args...)
 	what := strings.Join(args[:2], " ")

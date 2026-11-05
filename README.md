@@ -10,10 +10,10 @@ repository itself: the cluster's own Argo CD renders both versions with its own 
 (see [AUTH.md](./AUTH.md)).
 
 ```
-captain (CronJob, every 6 h while a target is set)                  glueops-prod                      lake
-argocd --core: appset list · app list                                glueops-inventory-receiver
-  per app: app diff --exit-code ── 0 ──▶ ok                            POST /v1/preflight (gzipped YAML) ──▶ preflight_runs / preflight_apps / preflight_findings
-           └─ 1 ──▶ app manifests ×2 → compare → classify                                                   → ClickHouse views → Grafana
+captain (CronJob, daily while a target is set)                       glueops-prod                      lake
+argocd admin dashboard on 127.0.0.1, once per run                    glueops-inventory-receiver
+  appset list · list apps                                              POST /v1/preflight (gzipped YAML) ──▶ preflight_runs / preflight_apps / preflight_findings
+  per app: app manifests ×2 → compare → classify                                                            → ClickHouse views → Grafana
   ConfigMap app-chart-preflight-status (YAML) · JSON log lines (Loki)
 ```
 
@@ -26,24 +26,29 @@ generic and only `internal/classify` knows that release's table.
 1. **Discover** — `argocd appset list`: every ApplicationSet whose template sources the `app` chart,
    in any of its three published forms (helm.gpkg.io · OCI `ghcr.io/glueops/project-template-helm-chart-app` ·
    the chart's git repo). Its `targetRevision` is the set's `current_revision`.
-   `argocd app list`: apps are attributed to their set (label `argocd.argoproj.io/application-set-name`,
+   Applications are listed from the Kubernetes API in pages, keeping only the fields used: apps are attributed to their set (label `argocd.argoproj.io/application-set-name`,
    else ownerReferences); app-chart apps nobody generated form the `standalone` group.
-2. **Per app**, `CONCURRENCY` at a time: `argocd app diff <app> --revisions <target> --source-positions <i> --exit-code` —
-   exit 0 ⇒ **ok**, nothing else runs. Exit 1 ⇒ render current and target (`argocd app manifests`),
-   reduce both to pod templates, compare `command`/`args` item by item per container (findings),
-   report every other pod-template difference as paths only (`other_changes`), classify each finding.
+2. **Per app**, `CONCURRENCY` at a time: render current and target (`argocd app manifests`), reduce
+   both to pod templates, compare `command`/`args` item by item per container (findings), report
+   every other pod-template difference as paths only (`other_changes`), classify each finding.
+   There is no `app diff` first: a chart bump always changes the `helm.sh/chart` label, so a diff
+   against live never comes back clean.
 3. **Statuses** (ladder, worst wins): app `ok` · `ok-noop-diff` (only `null ↔ ""`) · `diff` ·
    `error` (target fails to render: a `null`/map item — `ComparisonError` after the bump) ·
    `unknown` (CLI failure, timeout, revision drift from the set's template, wrong kind of target) ·
    `skipped`. Set and run: `ok | diff | error | unknown | skipped`, `error > diff > unknown > ok`.
    **The gate is `appsets[<name>].status == ok`**; `unknown` is never a verdict.
 4. **Emit** — ConfigMap `app-chart-preflight-status` in the pod's namespace (`data.status`,
-   `data.target_revision`, `data.finished_at`, `data.schema_version`, `data["report.yaml"]`); one
+   `data.target_revision`, `data.finished_at`, `data.schema_version`, `data.report_truncated`,
+   `data["report.yaml"]`); one
    JSON log line per set and per non-ok app plus a `run summary` line (all
    `component=argocd-app-chart-preflight`); the YAML report gzipped to the receiver.
    **Exit 0 no matter what** once running — a verdict is not a Job failure, nor is an unreachable
    receiver (inventory-agent's contract). Only failures before the agent starts (image pull, OOM,
    `activeDeadlineSeconds`) fail the Job.
+5. **Stopping early** — at `RUN_TIMEOUT_MS`, or on SIGTERM (node drain, eviction), the run starts no
+   new work. Finished apps keep their verdict, the rest are `unknown` with a "not checked" reason,
+   and the report still goes out. A partial run is never `ok`, so the gate stays closed.
 
 ### Finding categories (`internal/classify`)
 
@@ -102,7 +107,8 @@ All configuration is via environment variables (the platform chart renders them 
 | `CAPTAIN_DOMAIN` | (required) | Cluster identity; keys every row and log line. A DNS name; rejected if it contains `placeholder`. |
 | `TARGET_REVISION` | `""` | Revision to check every set against: `0.18.0` for helm/OCI sources, `v0.18.0` or a branch for git. Empty ⇒ every set `skipped`. |
 | `TARGETS_JSON` | `{}` | Per-set override `{"<set>": "<rev>"}`; `""` skips that set. |
-| `CONCURRENCY` | `4` | Parallel per-app checks. |
+| `CONCURRENCY` | `2` | Parallel per-app checks. The pod is CPU bound, so more mostly adds peak memory. |
+| `RUN_TIMEOUT_MS` | `840000` | When the run stops starting work and reports what it has. Keep it below `activeDeadlineSeconds`. |
 | `ARGOCD_NAMESPACE` | `glueops-core` | Argo CD's namespace (the kubeconfig context the agent writes). |
 | `ARGOCD_BIN` | `/argocd` | The CLI (shipped in the image). |
 | `ARGOCD_TIMEOUT_MS` | `120000` | Per CLI call. |

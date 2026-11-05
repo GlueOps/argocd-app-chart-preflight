@@ -90,7 +90,17 @@ func run(lookup func(string) (string, bool), out io.Writer) (code int) {
 		return 0
 	}
 	defer server.Stop()
+	apps, err := kube.NewDynamicClient(kcPath, "argocd-app-chart-preflight/"+version, 60*time.Second)
+	if err != nil {
+		log.Error("kubernetes client unavailable", "reason", logging.ReasonArgocdUnavailable, "error", err.Error())
+		agent.LogSummary(log, agent.Summary{RunID: agent.NewRunID(time.Now()), Status: agent.StatusInternalError, Reason: logging.ReasonArgocdUnavailable, Error: err.Error(), Duration: time.Since(start)})
+		summarized = true
+		return 0
+	}
 	deps := agent.Deps{
+		Applications: func(ctx context.Context) ([]map[string]any, error) {
+			return kube.ListApplications(ctx, apps, cfg.ArgocdNamespace)
+		},
 		Argocd: argocd.Client{
 			Runner:   argocd.ExecRunner{Bin: cfg.ArgocdBin, Kubeconfig: kcPath, Home: home, Timeout: cfg.ArgocdTimeout},
 			Conn:     server.Conn(),

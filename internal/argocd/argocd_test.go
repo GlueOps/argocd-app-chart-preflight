@@ -37,14 +37,12 @@ func TestClientCommandLines(t *testing.T) {
 	c := Client{Runner: s, Conn: conn}
 	ctx := context.Background()
 	_, _ = c.ListApplicationSets(ctx)
-	_, _ = c.ListApplications(ctx)
 	c.Diff(ctx, "x", discover.SourceRef{Position: 2}, "0.18.0")
 	c.Manifests(ctx, "x", nil)
 	c.Manifests(ctx, "x", &Override{Ref: discover.SourceRef{Position: 1}, Revision: "v0.18.0"})
 	c.Manifests(ctx, "y", &Override{Ref: discover.SourceRef{Single: true}, Revision: "0.18.0"})
 	want := [][]string{
 		{"appset", "list", "-o", "json"},
-		{"app", "list", "-o", "json"},
 		{"app", "diff", "x", "--revisions", "0.18.0", "--source-positions", "2", "--exit-code"},
 		{"app", "manifests", "x"},
 		{"app", "manifests", "x", "--revisions", "v0.18.0", "--source-positions", "1"},
@@ -61,13 +59,13 @@ func TestClientCommandLines(t *testing.T) {
 func TestListFailuresAndEmpty(t *testing.T) {
 	c := Client{Runner: &scripted{answers: map[string]Result{
 		"appset list": {Code: 20, Stderr: []byte(`{"level":"fatal","msg":"services is forbidden: User x cannot list"}`)},
-		"app list":    ok("null"),
 		"version":     ok(`{"client":{"Version":"v3.2.12+4caf270"}}`),
 	}}}
 	if _, err := c.ListApplicationSets(context.Background()); err == nil || !strings.Contains(err.Error(), "appset list failed: services is forbidden") {
 		t.Errorf("err = %v", err)
 	}
-	if apps, err := c.ListApplications(context.Background()); err != nil || apps != nil {
+	empty := Client{Runner: &scripted{answers: map[string]Result{"appset list": ok("null")}}}
+	if apps, err := empty.ListApplicationSets(context.Background()); err != nil || apps != nil {
 		t.Errorf("null list: %v %v", apps, err)
 	}
 	if v := c.ClientVersion(context.Background()); v != "v3.2.12+4caf270" {
@@ -77,8 +75,8 @@ func TestListFailuresAndEmpty(t *testing.T) {
 	if v := bad.ClientVersion(context.Background()); v != "" {
 		t.Errorf("version on garbage = %q", v)
 	}
-	timedOut := Client{Runner: &scripted{answers: map[string]Result{"app list": {Code: -1, TimedOut: true}}}}
-	if _, err := timedOut.ListApplications(context.Background()); err == nil || !strings.Contains(err.Error(), "timed out") {
+	timedOut := Client{Runner: &scripted{answers: map[string]Result{"appset list": {Code: -1, TimedOut: true}}}}
+	if _, err := timedOut.ListApplicationSets(context.Background()); err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Errorf("timeout err = %v", err)
 	}
 }
@@ -172,11 +170,11 @@ func (c *counting) Run(_ context.Context, _ ...string) Result {
 func TestTransientFailuresAreRetried(t *testing.T) {
 	bind := `{"level":"fatal","msg":"failed to listen: listen tcp 127.0.0.1:43731: bind: address already in use"}`
 	r := &counting{failures: 2, stderr: bind, code: 20}
-	if _, err := (Client{Runner: r}).ListApplications(context.Background()); err != nil || r.calls != 3 {
+	if _, err := (Client{Runner: r}).ListApplicationSets(context.Background()); err != nil || r.calls != 3 {
 		t.Errorf("two collisions then success: err=%v calls=%d", err, r.calls)
 	}
 	r = &counting{failures: 5, stderr: bind, code: 20}
-	if _, err := (Client{Runner: r}).ListApplications(context.Background()); err == nil || r.calls != 3 {
+	if _, err := (Client{Runner: r}).ListApplicationSets(context.Background()); err == nil || r.calls != 3 {
 		t.Errorf("gives up after the retries: err=%v calls=%d", err, r.calls)
 	}
 	chart := &counting{failures: 5, stderr: "deployment.args: every item must be a string (got map)", code: 20}

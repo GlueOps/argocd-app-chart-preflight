@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 )
 
-// `argocd --core` runs Argo CD's API server in-process and takes the Argo CD
-// namespace from the kube context — in a pod the default would be the agent's
+// The local API server (see Server) takes the Argo CD namespace from the kube
+// context — in a pod the default would be the agent's
 // own namespace, not glueops-core. So the agent writes a one-context kubeconfig
 // from the mounted ServiceAccount with the namespace set, and points the CLI at
 // it. On a workstation KUBECONFIG is honoured as-is (dev).

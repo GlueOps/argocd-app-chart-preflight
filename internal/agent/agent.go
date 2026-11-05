@@ -38,12 +38,14 @@ const (
 
 // Deps are the agent's collaborators; tests substitute all of them.
 type Deps struct {
-	Argocd  argocd.Client
-	Kube    kubernetes.Interface // nil ⇒ the ConfigMap write is skipped
-	Sender  *send.Sender         // nil ⇒ no POST
-	Version string
-	Commit  string
-	Now     func() time.Time
+	// Applications lists the Applications discovery works from.
+	Applications func(ctx context.Context) ([]map[string]any, error)
+	Argocd       argocd.Client
+	Kube         kubernetes.Interface // nil ⇒ the ConfigMap write is skipped
+	Sender       *send.Sender         // nil ⇒ no POST
+	Version      string
+	Commit       string
+	Now          func() time.Time
 }
 
 // Summary is the one "run summary" log line every run ends with.
@@ -183,7 +185,7 @@ func Preflight(ctx context.Context, cfg config.Config, deps Deps, log *slog.Logg
 	if err != nil {
 		return nil, err
 	}
-	apps, err := deps.Argocd.ListApplications(ctx)
+	apps, err := deps.Applications(ctx)
 	if err != nil {
 		return nil, err
 	}

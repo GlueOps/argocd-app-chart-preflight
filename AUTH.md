@@ -4,21 +4,25 @@ This agent runs **inside a GlueOps captain** and talks to that cluster's Argo CD
 credential of its own: no Argo CD token, no GitHub token, no lake key. Every tenant-repo access it
 causes is performed by Argo CD with **Argo CD's own repository credentials**, exactly as a sync does.
 
-## How it reaches Argo CD — core mode
+## How it reaches Argo CD — one local API server
 
-The agent exec's the `argocd` CLI (copied into the image from the Argo CD release) with `--core`.
-Core mode runs Argo CD's API server in-process, authenticated as the pod's **Kubernetes
-ServiceAccount**, and hands renders to `argocd-repo-server`. The only subcommands invoked:
+The agent exec's the `argocd` CLI (copied into the image from the Argo CD release). At the start of
+a run it launches `argocd admin dashboard --address 127.0.0.1`, which runs Argo CD's API server
+in-process, authenticated as the pod's **Kubernetes ServiceAccount**, and hands renders to
+`argocd-repo-server`. Every other call is a thin client of that server. The only subcommands invoked:
 
 | command | why |
 |---|---|
-| `argocd appset list --core -o json` | find the ApplicationSets that template the `app` chart and their pinned revision |
-| `argocd app list --core -o json` | attribute Applications to their set; read sync status and values-file list |
-| `argocd app diff <app> --core --revisions <target> --source-positions <i> --exit-code` | fast path: exit 0 ⇒ nothing changes |
-| `argocd app manifests <app> --core` / `… --revisions <target> …` | the two renders compared for old/new values |
+| `argocd admin dashboard --port <free port> --address 127.0.0.1` | the run's local API server |
+| `argocd appset list -o json` | find the ApplicationSets that template the `app` chart and their pinned revision |
+| Kubernetes API list of `applications`, 100 at a time | attribute Applications to their set; read sync status and values-file list. Only those fields are kept, because `argocd app list` carries each object whole and that alone can OOM the pod |
+| `argocd app manifests <app>` / `… --revisions <target> …` | the two renders compared for old/new values |
+| `argocd app diff <app> --revisions <target> …` | only with `ARGOCD_DIFF_TEXT=true`, on apps that differ |
 | `argocd version --client` | recorded in the report |
 
-Core mode bypasses Argo CD's own RBAC (it *is* the server), so the boundary is Kubernetes RBAC.
+The local server has Argo CD's auth and RBAC off (it *is* the server), so the boundary is Kubernetes
+RBAC. It listens on loopback only, inside the agent's own pod, for the length of the run. The pod
+has no other containers, and its web UI port is never exposed by a Service.
 
 ## Kubernetes RBAC (granted by the platform chart template; verified on venus nonprod, 2026-11-04)
 
@@ -27,7 +31,7 @@ Core mode bypasses Argo CD's own RBAC (it *is* the server), so the boundary is K
 | resource | verbs | why |
 |---|---|---|
 | `applications`, `applicationsets`, `appprojects` (argoproj.io) | get, list | discovery and the Application specs the renders are built from |
-| `secrets`, `configmaps` | get, list | core mode reads `argocd-cm`/`argocd-rbac-cm` and the repository-credential Secrets to brief the repo-server |
+| `secrets`, `configmaps` | get, list | the local server reads `argocd-cm`/`argocd-rbac-cm` and the repository-credential Secrets to brief the repo-server |
 | `services`, `pods` | get, list | the headless client discovers `argocd-repo-server` / redis by Service and pod |
 | `pods/portforward` | create | the headless client port-forwards to them (even from inside the cluster) |
 

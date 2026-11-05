@@ -169,7 +169,12 @@ func cfg(target string) config.Config {
 
 func deps(s *scripted) Deps {
 	t0 := time.Date(2026, 11, 4, 10, 0, 0, 0, time.UTC)
-	return Deps{Argocd: argocd.Client{Runner: s}, Version: "test", Commit: "abc", Now: func() time.Time { t0 = t0.Add(time.Second); return t0 }}
+	apps := func(ctx context.Context) ([]map[string]any, error) {
+		var out []map[string]any
+		err := json.Unmarshal(s.Run(ctx, "app", "list").Stdout, &out)
+		return out, err
+	}
+	return Deps{Argocd: argocd.Client{Runner: s}, Applications: apps, Version: "test", Commit: "abc", Now: func() time.Time { t0 = t0.Add(time.Second); return t0 }}
 }
 
 func byName(sets []schema.AppSet, name string) *schema.AppSet {
