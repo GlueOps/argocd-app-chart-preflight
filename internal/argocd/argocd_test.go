@@ -148,3 +148,41 @@ func TestKubeconfig(t *testing.T) {
 		t.Errorf("neither: %v", err)
 	}
 }
+
+// counting is a Runner that fails with a given stderr for the first n calls, then succeeds.
+type counting struct {
+	failures int
+	stderr   string
+	code     int
+	calls    int
+}
+
+func (c *counting) Run(_ context.Context, _ ...string) Result {
+	c.calls++
+	if c.calls <= c.failures {
+		return Result{Code: c.code, Stderr: []byte(c.stderr)}
+	}
+	return Result{Code: 0, Stdout: []byte("[]")}
+}
+
+func TestTransientCoreModeFailuresAreRetried(t *testing.T) {
+	bind := `{"level":"fatal","msg":"failed to listen: listen tcp 127.0.0.1:43731: bind: address already in use"}`
+	r := &counting{failures: 2, stderr: bind, code: 20}
+	if _, err := (Client{Runner: r}).ListApplications(context.Background()); err != nil || r.calls != 3 {
+		t.Errorf("two collisions then success: err=%v calls=%d", err, r.calls)
+	}
+	r = &counting{failures: 5, stderr: bind, code: 20}
+	if _, err := (Client{Runner: r}).ListApplications(context.Background()); err == nil || r.calls != 3 {
+		t.Errorf("gives up after the retries: err=%v calls=%d", err, r.calls)
+	}
+	chart := &counting{failures: 5, stderr: "deployment.args: every item must be a string (got map)", code: 20}
+	(Client{Runner: chart}).Manifests(context.Background(), "x", nil)
+	if chart.calls != 1 {
+		t.Errorf("a chart error is never retried, got %d calls", chart.calls)
+	}
+	diff := &counting{failures: 5, stderr: "port forward whatever", code: 1}
+	(Client{Runner: diff}).Diff(context.Background(), "x", discover.SourceRef{Position: 1}, "v")
+	if diff.calls != 1 {
+		t.Errorf("diff exit 1 means a diff, never retried, got %d calls", diff.calls)
+	}
+}
