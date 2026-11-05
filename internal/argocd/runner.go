@@ -36,6 +36,7 @@ type ExecRunner struct {
 	Kubeconfig string
 	Home       string // the CLI writes ~/.config/argocd; an emptyDir in the pod
 	Timeout    time.Duration
+	Env        []string // extra environment for each call
 }
 
 // Run executes Bin with args. Stdout/stderr are captured in full (a render of a
@@ -44,7 +45,7 @@ func (r ExecRunner) Run(ctx context.Context, args ...string) Result {
 	ctx, cancel := context.WithTimeout(ctx, r.Timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, r.Bin, args...)
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + r.Home, "KUBECONFIG=" + r.Kubeconfig}
+	cmd.Env = append([]string{"PATH=" + os.Getenv("PATH"), "HOME=" + r.Home, "KUBECONFIG=" + r.Kubeconfig}, r.Env...)
 	cmd.Stdin = nil
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
