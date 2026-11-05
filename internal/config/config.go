@@ -34,6 +34,9 @@ type Config struct {
 	Targets map[string]string
 	// Concurrency is the number of parallel per-app checks.
 	Concurrency int
+	// RunTimeout is when the run stops starting work and reports what it has;
+	// keep it below the CronJob's activeDeadlineSeconds.
+	RunTimeout time.Duration
 	// ArgocdBin is the CLI copied into the image (overridable for dev).
 	ArgocdBin string
 	// ArgocdTimeout bounds each CLI call; the repo-server render is the slow part.
@@ -87,7 +90,10 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	if c.Targets, err = ParseTargets(get("TARGETS_JSON", "")); err != nil {
 		errs = append(errs, err)
 	}
-	if c.Concurrency, err = intEnv(lookup, "CONCURRENCY", 4, 1); err != nil {
+	if c.Concurrency, err = intEnv(lookup, "CONCURRENCY", 2, 1); err != nil {
+		errs = append(errs, err)
+	}
+	if c.RunTimeout, err = durationEnv(lookup, "RUN_TIMEOUT_MS", 14*time.Minute); err != nil {
 		errs = append(errs, err)
 	}
 	if c.ArgocdTimeout, err = durationEnv(lookup, "ARGOCD_TIMEOUT_MS", 120*time.Second); err != nil {

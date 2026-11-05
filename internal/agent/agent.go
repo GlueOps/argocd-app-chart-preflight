@@ -7,6 +7,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -85,6 +86,10 @@ func NewRunID(now time.Time) string {
 	return fmt.Sprintf("%s_%08x", now.UTC().Format("20060102150405"), uint32(now.UnixNano()))
 }
 
+// outputTimeout bounds the ConfigMap write and the POST together. It fits inside
+// the pod's 60 s termination grace period, so a SIGTERM still gets a report out.
+const outputTimeout = 40 * time.Second
+
 // Run executes one preflight and returns the exit code (always 0) and the report.
 func Run(ctx context.Context, cfg config.Config, deps Deps, log *slog.Logger) (int, *schema.Report) {
 	now := deps.Now
@@ -110,8 +115,11 @@ func Run(ctx context.Context, cfg config.Config, deps Deps, log *slog.Logger) (i
 		log.Error("report could not be rendered", "reason", logging.ReasonInternalError, "error", yerr.Error())
 		sum.Status, sum.Reason, sum.Error = StatusInternalError, logging.ReasonInternalError, yerr.Error()
 	} else {
-		sum.ConfigMap = writeConfigMap(ctx, cfg, deps, log, rep, yamlText)
-		sum.Ingest = post(ctx, cfg, deps, log, yamlText)
+		// The run's context may already be over: a report for a stopped run matters most.
+		outCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), outputTimeout)
+		defer cancel()
+		sum.ConfigMap = writeConfigMap(outCtx, cfg, deps, log, rep, yamlText)
+		sum.Ingest = post(outCtx, cfg, deps, log, yamlText)
 	}
 	sum.Duration = now().Sub(started)
 	LogSummary(log, sum)
@@ -269,6 +277,9 @@ func CheckApp(ctx context.Context, cfg config.Config, cli argocd.Client, g *disc
 	// would only add a third call to every app.
 	oldR := cli.Manifests(ctx, app.Name, nil)
 	newR := cli.Manifests(ctx, app.Name, &argocd.Override{Ref: app.Chart.Ref, Revision: target})
+	if ctx.Err() != nil && (oldR.Code != 0 || newR.Code != 0) {
+		return withStatus(r, schema.AppUnknown, stoppedReason(ctx))
+	}
 	if newR.Code != 0 && !newR.TimedOut && argocd.ChartRenderErrorRE.Match(newR.Stderr) {
 		return withStatus(r, schema.AppError, argocd.ChartErrorReason(newR.Stderr))
 	}
@@ -308,6 +319,15 @@ func CheckApp(ctx context.Context, cfg config.Config, cli argocd.Client, g *disc
 		}
 	}
 	return r
+}
+
+// stoppedReason says why an app has no verdict, so a partial report reads as
+// partial: the gate stays closed and nobody mistakes it for a render failure.
+func stoppedReason(ctx context.Context) string {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return "not checked: the run reached its time limit"
+	}
+	return "not checked: the run was stopped before this app finished"
 }
 
 var diffHeaderRE = regexp.MustCompile(`^=====\s+\S*/(\S+)\s+\S+\s+=====`)

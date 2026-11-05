@@ -12,9 +12,11 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/glueops/argocd-app-chart-preflight/internal/argocd"
@@ -408,6 +410,80 @@ func TestRunWritesConfigMapPostsYAMLAndLogsOneSummary(t *testing.T) {
 	}
 	if !strings.HasPrefix(received, "schema_version: 1\n") || !strings.Contains(received, `captain_domain: "nonprod.venus.onglueops.rocks"`) {
 		t.Errorf("receiver got:\n%s", received)
+	}
+}
+
+// A run stopped part-way (deadline or SIGTERM) must still report: finished apps
+// keep their verdict, the rest are unknown with the reason, and the ConfigMap
+// and POST go out even though the run's context is over.
+func TestStoppedRunStillReports(t *testing.T) {
+	for name, tc := range map[string]struct {
+		stop   func() (context.Context, context.CancelFunc)
+		reason string
+	}{
+		"deadline": {func() (context.Context, context.CancelFunc) {
+			return context.WithTimeout(context.Background(), time.Hour)
+		}, "the run reached its time limit"},
+		"sigterm": {func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) }, "stopped before this app finished"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var received atomic.Bool
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				received.Store(true)
+				w.WriteHeader(http.StatusAccepted)
+			}))
+			defer srv.Close()
+			ctx, cancel := tc.stop()
+			defer cancel()
+			if name == "deadline" {
+				ctx, cancel = context.WithDeadline(ctx, time.Now().Add(200*time.Millisecond))
+				defer cancel()
+			}
+			s := &scripted{routes: []route{
+				{is("version"), ok("{}")},
+				{is("appset", "list"), ok(jsonList(applicationSet(set, gitChartSrc("v0.17.1"))))},
+				{is("app", "list"), ok(jsonList(application("done", set, []any{gitChartSrc("v0.17.1"), venusValuesSrc}, nil, ""), application("late", set, []any{gitChartSrc("v0.17.1"), venusValuesSrc}, nil, "")))},
+				{hasApp("manifests", "done"), ok(deployment("done", []any{"x"}))},
+				{hasApp("manifests", "late"), func([]string) argocd.Result {
+					if name == "sigterm" {
+						cancel()
+					} else {
+						<-ctx.Done()
+					}
+					return argocd.Result{Code: -1}
+				}},
+			}}
+			c := cfg("v0.18.0")
+			c.Concurrency = 1
+			c.IngestURL = srv.URL
+			c.StatusConfigMap = "app-chart-preflight-status"
+			c.StatusNamespace = "preflight"
+			d := deps(s)
+			kube := fake.NewClientset()
+			d.Kube = kube
+			d.Sender = send.New(send.Options{URL: srv.URL, Timeout: time.Second})
+			var out bytes.Buffer
+			_, rep := Run(ctx, c, d, logging.New("info", &out))
+			if rep == nil {
+				t.Fatalf("no report:\n%s", out.String())
+			}
+			g := byName(rep.AppSets, set)
+			if a := appByName(g, "done"); a.Status != schema.AppOK {
+				t.Errorf("finished app lost its verdict: %+v", a)
+			}
+			if a := appByName(g, "late"); a.Status != schema.AppUnknown || !strings.Contains(*a.Reason, tc.reason) {
+				t.Errorf("late = %s %q", a.Status, deref(a.Reason))
+			}
+			if rep.Run.Status != schema.GroupUnknown {
+				t.Errorf("a partial run must not pass the gate: %s", rep.Run.Status)
+			}
+			if !received.Load() {
+				t.Errorf("POST did not go out:\n%s", out.String())
+			}
+			if _, err := kube.CoreV1().ConfigMaps("preflight").Get(context.Background(), "app-chart-preflight-status", metav1.GetOptions{}); err != nil {
+				t.Errorf("configmap not written: %v", err)
+			}
+		})
 	}
 }
 

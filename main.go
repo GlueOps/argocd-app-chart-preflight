@@ -12,7 +12,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/glueops/argocd-app-chart-preflight/internal/agent"
@@ -29,9 +31,6 @@ var (
 	version = "dev"
 	commit  = "local"
 )
-
-// runTimeout is a far-off backstop below the CronJob's activeDeadlineSeconds.
-const runTimeout = 14 * time.Minute
 
 func main() {
 	os.Exit(run(os.LookupEnv, os.Stdout))
@@ -64,7 +63,11 @@ func run(lookup func(string) (string, bool), out io.Writer) (code int) {
 	}
 	log.Info("config loaded", "captain_domain", cfg.CaptainDomain, "target", cfg.TargetRevision, "targets", cfg.Targets, "concurrency", cfg.Concurrency, "ingest", cfg.IngestURL != "", "configmap", cfg.StatusConfigMap, "dev_mode", cfg.DevMode)
 
-	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
+	// A deadline or a SIGTERM (node drain, eviction) stops new work; agent.Run
+	// still writes the report for what finished, on a context of its own.
+	signalled, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stopSignals()
+	ctx, cancel := context.WithTimeout(signalled, cfg.RunTimeout)
 	defer cancel()
 
 	kcPath, kcSource, err := argocd.EnsureKubeconfig(argocd.KubeconfigOptions{Explicit: cfg.Kubeconfig, ServiceAccountDir: cfg.ServiceAccountDir, ArgocdNamespace: cfg.ArgocdNamespace, Dir: cfg.KubeconfigDir})
