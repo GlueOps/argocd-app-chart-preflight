@@ -16,6 +16,10 @@ import (
 	"github.com/glueops/argocd-app-chart-preflight/internal/schema"
 )
 
+// MaxReportBytes keeps report.yaml under the 1 MiB ConfigMap limit, with room for
+// the other keys and the object's metadata.
+const MaxReportBytes = 900 * 1024
+
 // ManagedByLabel marks the status ConfigMap.
 const ManagedByLabel = "argocd-app-chart-preflight"
 
@@ -30,8 +34,9 @@ func PodNamespace(serviceAccountDir string) (string, error) {
 
 // StatusConfigMap builds the ConfigMap: flat keys first so
 // `kubectl get cm -o jsonpath='{.data.status}'` answers without parsing the
-// report, then the YAML report under report.yaml.
-func StatusConfigMap(namespace, name string, r *schema.Report, yamlText []byte) *corev1.ConfigMap {
+// report, then the YAML report under report.yaml. report_truncated is "true"
+// when clean apps were cut to fit; the receiver always gets the full report.
+func StatusConfigMap(namespace, name string, r *schema.Report, yamlText []byte, truncated bool) *corev1.ConfigMap {
 	target := ""
 	if r.Run.TargetRevision != nil {
 		target = *r.Run.TargetRevision
@@ -39,11 +44,12 @@ func StatusConfigMap(namespace, name string, r *schema.Report, yamlText []byte) 
 	return &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": ManagedByLabel}},
 		Data: map[string]string{
-			"status":          r.Run.Status,
-			"target_revision": target,
-			"finished_at":     r.Run.FinishedAt,
-			"schema_version":  strconv.Itoa(r.SchemaVersion),
-			"report.yaml":     string(yamlText),
+			"status":           r.Run.Status,
+			"target_revision":  target,
+			"finished_at":      r.Run.FinishedAt,
+			"schema_version":   strconv.Itoa(r.SchemaVersion),
+			"report_truncated": strconv.FormatBool(truncated),
+			"report.yaml":      string(yamlText),
 		},
 	}
 }

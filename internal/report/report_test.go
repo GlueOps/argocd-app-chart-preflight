@@ -138,3 +138,26 @@ func TestFindingsFlatten(t *testing.T) {
 		t.Errorf("second = %+v", f[1])
 	}
 }
+
+func TestFitYAML(t *testing.T) {
+	apps := []schema.App{app("bad", schema.AppDiff), app("broken", schema.AppError), app("clean", schema.AppOK), app("noop", schema.AppOKNoopDiff), app("skip", schema.AppSkipped)}
+	r := &schema.Report{SchemaVersion: 1, Run: schema.Run{Status: schema.GroupError}, Summary: schema.RunSummary{AppSets: 1, Error: 1}, AppSets: []schema.AppSet{set("s", schema.GroupError, apps...)}}
+	full, err := ToYAML(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text, cut, err := FitYAML(r, full, len(full)); err != nil || cut || string(text) != string(full) {
+		t.Errorf("a report that fits is untouched: cut=%v err=%v", cut, err)
+	}
+	attention, cut, err := FitYAML(r, full, len(full)-1)
+	if err != nil || !cut || !strings.Contains(string(attention), `"bad"`) || !strings.Contains(string(attention), `"broken"`) || strings.Contains(string(attention), `"clean"`) || strings.Contains(string(attention), `"noop"`) {
+		t.Errorf("clean apps go first, cut=%v err=%v:\n%s", cut, err, attention)
+	}
+	rollup, cut, err := FitYAML(r, full, len(attention)-1)
+	if err != nil || !cut || strings.Contains(string(rollup), `"bad"`) || !strings.Contains(string(rollup), `status: "error"`) {
+		t.Errorf("roll-ups survive when nothing else fits, cut=%v err=%v:\n%s", cut, err, rollup)
+	}
+	if len(r.AppSets[0].Apps) != len(apps) {
+		t.Error("FitYAML must not change the report the receiver gets")
+	}
+}

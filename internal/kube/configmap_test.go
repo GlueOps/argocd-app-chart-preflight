@@ -17,8 +17,8 @@ func report() *schema.Report {
 }
 
 func TestStatusConfigMapKeys(t *testing.T) {
-	cm := StatusConfigMap("ns", "app-chart-preflight-status", report(), []byte("schema_version: 1\n"))
-	want := map[string]string{"status": "ok", "target_revision": "0.18.0", "finished_at": "2026-11-04T10:00:01.000Z", "schema_version": "1", "report.yaml": "schema_version: 1\n"}
+	cm := StatusConfigMap("ns", "app-chart-preflight-status", report(), []byte("schema_version: 1\n"), true)
+	want := map[string]string{"status": "ok", "target_revision": "0.18.0", "finished_at": "2026-11-04T10:00:01.000Z", "schema_version": "1", "report_truncated": "true", "report.yaml": "schema_version: 1\n"}
 	for k, v := range want {
 		if cm.Data[k] != v {
 			t.Errorf("data[%s] = %q, want %q", k, cm.Data[k], v)
@@ -31,11 +31,11 @@ func TestStatusConfigMapKeys(t *testing.T) {
 
 func TestUpsertCreatesThenUpdates(t *testing.T) {
 	client := fake.NewClientset()
-	cm := StatusConfigMap("ns", "cm", report(), []byte("a"))
+	cm := StatusConfigMap("ns", "cm", report(), []byte("a"), false)
 	if got, err := UpsertConfigMap(context.Background(), client, cm); err != nil || got != "created" {
 		t.Fatalf("first upsert: %q %v", got, err)
 	}
-	cm2 := StatusConfigMap("ns", "cm", report(), []byte("b"))
+	cm2 := StatusConfigMap("ns", "cm", report(), []byte("b"), false)
 	if got, err := UpsertConfigMap(context.Background(), client, cm2); err != nil || got != "updated" {
 		t.Fatalf("second upsert: %q %v", got, err)
 	}

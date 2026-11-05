@@ -138,7 +138,15 @@ func writeConfigMap(ctx context.Context, cfg config.Config, deps Deps, log *slog
 			return "failed: pod namespace unknown"
 		}
 	}
-	res, err := kube.UpsertConfigMap(ctx, deps.Kube, kube.StatusConfigMap(ns, cfg.StatusConfigMap, rep, yamlText))
+	text, truncated, err := report.FitYAML(rep, yamlText, kube.MaxReportBytes)
+	if err != nil {
+		log.Warn("status configmap skipped: report could not be reduced", "reason", logging.ReasonConfigMapWriteFailed, "error", err.Error())
+		return "failed: " + err.Error()
+	}
+	if truncated {
+		log.Warn("report too large for the configmap: clean apps cut, the receiver gets the full report", "bytes", len(yamlText))
+	}
+	res, err := kube.UpsertConfigMap(ctx, deps.Kube, kube.StatusConfigMap(ns, cfg.StatusConfigMap, rep, text, truncated))
 	if err != nil {
 		log.Warn("status configmap write failed", "reason", logging.ReasonConfigMapWriteFailed, "error", err.Error())
 		return "failed: " + err.Error()

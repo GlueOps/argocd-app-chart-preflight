@@ -142,3 +142,41 @@ func Findings(app *schema.App) []FindingLine {
 	}
 	return out
 }
+
+// FitYAML returns the report's YAML for a store with a size limit: the full
+// text when it fits, else only the apps that need attention, else the roll-ups
+// alone. Summaries always describe the whole run. truncated says apps were cut.
+func FitYAML(r *schema.Report, full []byte, maxBytes int) (text []byte, truncated bool, err error) {
+	if len(full) <= maxBytes {
+		return full, false, nil
+	}
+	for _, keep := range []func(schema.App) bool{needsAttention, func(schema.App) bool { return false }} {
+		if text, err = ToYAML(withApps(r, keep)); err != nil {
+			return nil, false, err
+		}
+		if len(text) <= maxBytes {
+			break
+		}
+	}
+	return text, true, nil
+}
+
+func needsAttention(a schema.App) bool {
+	return a.Status == schema.AppDiff || a.Status == schema.AppError || a.Status == schema.AppUnknown
+}
+
+func withApps(r *schema.Report, keep func(schema.App) bool) *schema.Report {
+	out := *r
+	out.AppSets = make([]schema.AppSet, len(r.AppSets))
+	for i, s := range r.AppSets {
+		apps := []schema.App{}
+		for _, a := range s.Apps {
+			if keep(a) {
+				apps = append(apps, a)
+			}
+		}
+		s.Apps = apps
+		out.AppSets[i] = s
+	}
+	return &out
+}
