@@ -109,3 +109,21 @@ func cap1000(s string) string {
 	}
 	return s
 }
+
+// ChartErrorReason trims a chart render failure to the chart's own sentence
+// ("deployment.args: every item must be a string (got map) - …") when it is
+// there, else falls back to StderrReason.
+func ChartErrorReason(stderr []byte) string {
+	full := StderrReason(stderr)
+	if i := strings.Index(full, "execution error at ("); i >= 0 {
+		s := full[i:]
+		if j := strings.Index(s, "): "); j >= 0 {
+			s = s[j+3:]
+		}
+		if k := strings.Index(s, "\n"); k >= 0 {
+			s = s[:k]
+		}
+		return cap1000(strings.TrimSpace(s))
+	}
+	return full
+}

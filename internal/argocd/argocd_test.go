@@ -186,3 +186,13 @@ func TestTransientCoreModeFailuresAreRetried(t *testing.T) {
 		t.Errorf("diff exit 1 means a diff, never retried, got %d calls", diff.calls)
 	}
 }
+
+func TestChartErrorReasonTrimsToTheChartSentence(t *testing.T) {
+	raw := `{"level":"fatal","msg":"rpc error: code = Unknown desc = failed to execute helm template command: failed to get command args to log: ` + "`helm template . --name-template x`" + ` failed exit status 1: Error: execution error at (app/templates/deployment.yaml:49:6): deployment.args: every item must be a string (got map) - quote the item in your values file; null, map and list items are not supported\n\nUse --debug flag to render out invalid YAML"}`
+	if got := ChartErrorReason([]byte(raw)); got != "deployment.args: every item must be a string (got map) - quote the item in your values file; null, map and list items are not supported" {
+		t.Errorf("got %q", got)
+	}
+	if got := ChartErrorReason([]byte(`{"msg":"dial tcp: connection refused"}`)); got != "dial tcp: connection refused" {
+		t.Errorf("fallback: %q", got)
+	}
+}

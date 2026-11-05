@@ -147,7 +147,10 @@ func ValidateTarget(sourceType, target string) string {
 		return ""
 	}
 	if !semverRE.MatchString(target) {
-		return fmt.Sprintf("target %q is not a chart version; a %s-sourced chart needs X.Y.Z (e.g. %s)", target, sourceType, strings.TrimPrefix(target, "v"))
+		if v := strings.TrimPrefix(target, "v"); semverRE.MatchString(v) {
+			return fmt.Sprintf("target %q is not a chart version; a %s-sourced chart needs X.Y.Z (e.g. %s)", target, sourceType, v)
+		}
+		return fmt.Sprintf("target %q is not a chart version; a %s-sourced chart needs X.Y.Z", target, sourceType)
 	}
 	return ""
 }

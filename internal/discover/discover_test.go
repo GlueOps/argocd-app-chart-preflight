@@ -200,3 +200,12 @@ func TestDiscoverSkipAndUnknown(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateTargetHintOnlyWhenItLooksLikeAVersion(t *testing.T) {
+	if r := ValidateTarget(schema.SourceHelm, "fix/container-args-quoting"); strings.Contains(r, "e.g.") {
+		t.Errorf("a branch must not be suggested as a version: %q", r)
+	}
+	if r := ValidateTarget(schema.SourceOCI, "v0.18.0"); !strings.Contains(r, "(e.g. 0.18.0)") {
+		t.Errorf("vX.Y.Z should suggest X.Y.Z: %q", r)
+	}
+}

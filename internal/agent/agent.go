@@ -269,7 +269,7 @@ func CheckApp(ctx context.Context, cfg config.Config, cli argocd.Client, g *disc
 		return r // identical to live at the target revision
 	case d.Code != 1:
 		if argocd.ChartRenderErrorRE.Match(d.Stderr) {
-			return withStatus(r, schema.AppError, argocd.StderrReason(d.Stderr))
+			return withStatus(r, schema.AppError, argocd.ChartErrorReason(d.Stderr))
 		}
 		return withStatus(r, schema.AppUnknown, argocd.StderrReason(d.Stderr))
 	}
@@ -277,7 +277,7 @@ func CheckApp(ctx context.Context, cfg config.Config, cli argocd.Client, g *disc
 	oldR := cli.Manifests(ctx, app.Name, nil)
 	newR := cli.Manifests(ctx, app.Name, &argocd.Override{Ref: app.Chart.Ref, Revision: target})
 	if newR.Code != 0 && !newR.TimedOut && argocd.ChartRenderErrorRE.Match(newR.Stderr) {
-		return withStatus(r, schema.AppError, argocd.StderrReason(newR.Stderr))
+		return withStatus(r, schema.AppError, argocd.ChartErrorReason(newR.Stderr))
 	}
 	for _, side := range []struct {
 		name string
