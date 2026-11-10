@@ -1,5 +1,8 @@
 // Command argocd-app-chart-preflight is GlueOps' per-captain pre-bump gate for
-// the `app` Helm chart. One run renders every tenant Application at a target
+// the `app` Helm chart. Run with flags, it is operator mode (operator.go): a
+// table for the terminal, the operator's own kube context, nothing written or
+// sent, and an exit code to gate on. Run without flags in a pod, it is the
+// CronJob: one run renders every tenant Application at a target
 // chart revision through the cluster's own Argo CD (one local API server per
 // run, Argo CD's own credentials), reports per ApplicationSet whether the bump is clean and, if
 // not, the exact old/new command/args items per container, writes the report
@@ -11,6 +14,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -19,6 +23,7 @@ import (
 
 	"github.com/glueops/argocd-app-chart-preflight/internal/agent"
 	"github.com/glueops/argocd-app-chart-preflight/internal/argocd"
+	"github.com/glueops/argocd-app-chart-preflight/internal/cli"
 	"github.com/glueops/argocd-app-chart-preflight/internal/config"
 	"github.com/glueops/argocd-app-chart-preflight/internal/kube"
 	"github.com/glueops/argocd-app-chart-preflight/internal/logging"
@@ -40,7 +45,41 @@ const (
 )
 
 func main() {
+	args := os.Args[1:]
+	if cli.IsOperatorInvocation(args, os.LookupEnv, defaultServiceAccountToken) {
+		os.Exit(runOperator(args, os.Stdout, os.Stderr, os.LookupEnv, isTerminal(os.Stdout), isTerminal(os.Stderr)))
+	}
 	os.Exit(run(os.LookupEnv, os.Stdout))
+}
+
+const defaultServiceAccountToken = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
+// connect starts the local Argo CD API server and builds the agent's
+// collaborators; both modes use it. stop shuts the server down.
+func connect(ctx context.Context, cfg config.Config, kcPath, home string, log *slog.Logger) (agent.Deps, func(), error) {
+	server := &argocd.Server{Bin: cfg.ArgocdBin, Kubeconfig: kcPath, Home: home, Log: log, Env: []string{serverMemoryLimit}}
+	if err := server.Start(ctx); err != nil {
+		return agent.Deps{}, func() {}, fmt.Errorf("local argocd server unavailable: %w", err)
+	}
+	apps, err := kube.NewDynamicClient(kcPath, "argocd-app-chart-preflight/"+version, 60*time.Second)
+	if err != nil {
+		server.Stop()
+		return agent.Deps{}, func() {}, fmt.Errorf("kubernetes client unavailable: %w", err)
+	}
+	return agent.Deps{
+		Applications: func(ctx context.Context) ([]map[string]any, error) {
+			return kube.ListApplications(ctx, apps, cfg.ArgocdNamespace)
+		},
+		Argocd: argocd.Client{
+			Runner:   argocd.ExecRunner{Bin: cfg.ArgocdBin, Kubeconfig: kcPath, Home: home, Timeout: cfg.ArgocdTimeout, Env: []string{clientMemoryLimit}},
+			Conn:     server.Conn(),
+			Recovery: server,
+			Retries:  3,
+			Backoff:  3 * time.Second,
+		},
+		Version: version,
+		Commit:  commit,
+	}, server.Stop, nil
 }
 
 // run is the whole process: it always returns 0 and always ends with exactly
@@ -89,35 +128,14 @@ func run(lookup func(string) (string, bool), out io.Writer) (code int) {
 		home = filepath.Join(cfg.KubeconfigDir, "argocd-home")
 		_ = os.MkdirAll(home, 0o700)
 	}
-	server := &argocd.Server{Bin: cfg.ArgocdBin, Kubeconfig: kcPath, Home: home, Log: log, Env: []string{serverMemoryLimit}}
-	if err := server.Start(ctx); err != nil {
-		log.Error("local argocd server unavailable", "reason", logging.ReasonArgocdUnavailable, "error", err.Error())
-		agent.LogSummary(log, agent.Summary{RunID: agent.NewRunID(time.Now()), Status: agent.StatusInternalError, Reason: logging.ReasonArgocdUnavailable, Error: err.Error(), Duration: time.Since(start)})
-		summarized = true
-		return 0
-	}
-	defer server.Stop()
-	apps, err := kube.NewDynamicClient(kcPath, "argocd-app-chart-preflight/"+version, 60*time.Second)
+	deps, stop, err := connect(ctx, cfg, kcPath, home, log)
 	if err != nil {
-		log.Error("kubernetes client unavailable", "reason", logging.ReasonArgocdUnavailable, "error", err.Error())
+		log.Error("argocd unavailable", "reason", logging.ReasonArgocdUnavailable, "error", err.Error())
 		agent.LogSummary(log, agent.Summary{RunID: agent.NewRunID(time.Now()), Status: agent.StatusInternalError, Reason: logging.ReasonArgocdUnavailable, Error: err.Error(), Duration: time.Since(start)})
 		summarized = true
 		return 0
 	}
-	deps := agent.Deps{
-		Applications: func(ctx context.Context) ([]map[string]any, error) {
-			return kube.ListApplications(ctx, apps, cfg.ArgocdNamespace)
-		},
-		Argocd: argocd.Client{
-			Runner:   argocd.ExecRunner{Bin: cfg.ArgocdBin, Kubeconfig: kcPath, Home: home, Timeout: cfg.ArgocdTimeout, Env: []string{clientMemoryLimit}},
-			Conn:     server.Conn(),
-			Recovery: server,
-			Retries:  3,
-			Backoff:  3 * time.Second,
-		},
-		Version: version,
-		Commit:  commit,
-	}
+	defer stop()
 	log.Info("argocd ready", "kubeconfig", kcSource, "bin", cfg.ArgocdBin)
 
 	// The status ConfigMap is written only from inside a cluster (never with an

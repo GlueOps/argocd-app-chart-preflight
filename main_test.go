@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -43,5 +44,48 @@ func TestRunAlwaysExitsZeroWithOneSummary(t *testing.T) {
 		if !strings.Contains(logs, `"run_id":"`) || !strings.Contains(logs, `"component":"argocd-app-chart-preflight"`) {
 			t.Errorf("%s: summary must carry run_id and component:\n%s", name, logs)
 		}
+	}
+}
+
+func TestOperatorModeEarlyExits(t *testing.T) {
+	none := func(string) (string, bool) { return "", false }
+	var out, errOut bytes.Buffer
+	if code := runOperator([]string{"--help"}, &out, &errOut, none, false, false); code != 0 || !strings.Contains(errOut.String(), "Usage: app-chart-preflight") {
+		t.Errorf("--help: exit %d\n%s", code, errOut.String())
+	}
+	out.Reset()
+	if code := runOperator([]string{"--version"}, &out, &errOut, none, false, false); code != 0 || !strings.HasPrefix(out.String(), "app-chart-preflight dev") {
+		t.Errorf("--version: exit %d, %q", code, out.String())
+	}
+	errOut.Reset()
+	if code := runOperator([]string{"--appset", "prod"}, &out, &errOut, none, false, false); code != 2 || !strings.Contains(errOut.String(), "no target for prod") {
+		t.Errorf("missing target: exit %d\n%s", code, errOut.String())
+	}
+	// A kube context that does not exist stops the run before anything starts.
+	kc := filepath.Join(t.TempDir(), "config")
+	_ = os.WriteFile(kc, []byte("apiVersion: v1\nkind: Config\ncurrent-context: \"\"\n"), 0o600)
+	t.Setenv("KUBECONFIG", kc)
+	errOut.Reset()
+	if code := runOperator([]string{"--target", "0.18.0", "--context", "nope"}, &out, &errOut, none, false, false); code != 2 || !strings.Contains(errOut.String(), `kube context "nope" not found`) {
+		t.Errorf("unknown context: exit %d\n%s", code, errOut.String())
+	}
+}
+
+func TestProgress(t *testing.T) {
+	var b bytes.Buffer
+	p := progress(&b, false)
+	for i := 1; i <= 20; i++ {
+		p(i, 20)
+	}
+	// The first app, then every tenth of the way: 11 lines for 20 apps.
+	if n := strings.Count(b.String(), "\n"); n != 11 {
+		t.Errorf("non-terminal progress printed %d lines, want 11:\n%s", n, b.String())
+	}
+	b.Reset()
+	p = progress(&b, true)
+	p(1, 2)
+	p(2, 2)
+	if !strings.HasPrefix(b.String(), "\rchecked 1/2 apps") || !strings.HasSuffix(b.String(), "\r\x1b[K") {
+		t.Errorf("terminal progress = %q", b.String())
 	}
 }

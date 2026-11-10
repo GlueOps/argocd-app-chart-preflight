@@ -22,6 +22,12 @@ const DefaultStatusConfigMap = "app-chart-preflight-status"
 
 var captainDomainRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`)
 
+// ValidCaptainDomain says whether s looks like a captain domain (a DNS name
+// with at least two labels).
+func ValidCaptainDomain(s string) bool {
+	return captainDomainRE.MatchString(s) && !strings.Contains(s, "placeholder")
+}
+
 // Config is the validated configuration.
 type Config struct {
 	// CaptainDomain is the cluster identity; it keys every row and log line.
