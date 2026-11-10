@@ -4,6 +4,16 @@ This agent runs **inside a GlueOps captain** and talks to that cluster's Argo CD
 credential of its own: no Argo CD token, no GitHub token, no lake key. Every tenant-repo access it
 causes is performed by Argo CD with **Argo CD's own repository credentials**, exactly as a sync does.
 
+## Operator mode
+
+Run from the captain codespace, the command uses the **operator's own kube credentials**: a
+temporary one-context copy of their kubeconfig (exec auth plugins kept, namespace set to Argo CD's),
+deleted when the command ends. It needs the same reads as the CronJob's Role below; an operator who
+releases to the captain already has them. It writes nothing to the cluster (no ConfigMap) and sends
+nothing anywhere (no receiver POST). The report goes to the terminal, and to a file only with `--save`.
+
+The rest of this page describes the CronJob.
+
 ## How it reaches Argo CD — one local API server
 
 The agent exec's the `argocd` CLI (copied into the image from the Argo CD release). At the start of

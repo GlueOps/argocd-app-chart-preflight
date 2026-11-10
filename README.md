@@ -1,13 +1,19 @@
 # argocd-app-chart-preflight
 
-A read-only pre-bump gate for the GlueOps [`app` Helm chart](https://github.com/GlueOps/project-template-helm-chart-app),
-run **inside each GlueOps captain** as a CronJob (deployed by
-[platform-helm-chart-platform](https://github.com/GlueOps/platform-helm-chart-platform), like
-`inventory-agent`). Before anyone bumps an ApplicationSet's chart `targetRevision`, it answers:
-*"what would change if this environment's tenant apps rendered at chart version X?"* — per
-ApplicationSet, per app, down to the exact old/new `command`/`args` item. It never reads a tenant
-repository itself: the cluster's own Argo CD renders both versions with its own credentials
-(see [AUTH.md](./AUTH.md)).
+A read-only pre-bump gate for the GlueOps [`app` Helm chart](https://github.com/GlueOps/project-template-helm-chart-app).
+Before anyone bumps an ApplicationSet's chart `targetRevision`, it answers: *"what would change if
+this environment's tenant apps rendered at chart version X?"*, per ApplicationSet, per app, down to
+the exact old/new `command`/`args` item. It never reads a tenant repository itself: the cluster's own
+Argo CD renders both versions with its own repository credentials (see [AUTH.md](./AUTH.md)).
+
+One binary, two ways to run it:
+
+- **Operator mode (how chart bumps are done today).** An operator runs `app-chart-preflight` from the
+  captain codespace right before bumping, and reads a table in the terminal. It uses their kube
+  context, writes nothing to the cluster and sends nothing. See [Operator use](#operator-use).
+- **CronJob.** Deployed on every captain by
+  [platform-helm-chart-platform](https://github.com/GlueOps/platform-helm-chart-platform) (parked
+  for now), it reports to a ConfigMap and the fleet receiver:
 
 ```
 captain (CronJob, daily while a target is set)                       glueops-prod                      lake
@@ -20,6 +26,94 @@ argocd admin dashboard on 127.0.0.1, once per run                    glueops-inv
 Built for the 0.18.0 breaking release of the chart
 ([#147](https://github.com/GlueOps/project-template-helm-chart-app/pull/147)); the diff machinery is
 generic and only `internal/classify` knows that release's table.
+
+## Operator use
+
+From the captain repo in the captain codespace, with the kube context of that captain:
+
+```bash
+app-chart-preflight --target 0.18.0                                    # every ApplicationSet that uses the chart
+app-chart-preflight --target v0.18.0 --appset nonprod-application-set  # just that set
+app-chart-preflight --appset prod=0.18.0 --appset previews=v0.18.0      # a target per set
+app-chart-preflight --target 0.18.0 --save report.yaml                 # also keep the full YAML report
+```
+
+The target's form follows how the ApplicationSet sources the chart: `0.18.0` for helm.gpkg.io or
+OCI, `v0.18.0` (a tag) or a branch for the chart's git repository. A target of the wrong kind is
+reported as no verdict, with the expected form. `--appset standalone` selects the app-chart
+Applications that no ApplicationSet generated.
+
+| Flag | Default | |
+|---|---|---|
+| `--target REV` | | Chart revision for every selected set. |
+| `--appset NAME[=REV]` | every set | Check only this set; `=REV` also sets its target. Repeatable. |
+| `--context` | current | Kube context. |
+| `--argocd-namespace` | `glueops-core` | Where Argo CD runs. |
+| `--argocd-bin` | `argocd` | The Argo CD CLI. |
+| `--concurrency` | `4` | Apps checked in parallel. |
+| `--timeout` | `60m` | Stop starting checks after this; unfinished apps are reported as not checked. |
+| `--diff` / `--no-diff` | on | The pod-template diff of every app that changes. |
+| `--all` | off | Also list clean and skipped apps one by one. |
+| `--wide` | off | Do not truncate values, hints and reasons. |
+| `--no-color` | | Colour is also off when stdout is not a terminal, or `NO_COLOR` is set. |
+| `--save FILE` | | Also write the full report as YAML. |
+| `--format text\|yaml` | `text` | What goes to stdout. |
+
+**Exit code:** `0` every checked set is `ok`, so it is safe to bump; `1` a set has a `diff` or an
+`error`; `2` a set has no verdict, nothing was checked, a named set does not exist, or the run
+could not start.
+
+Output from venus nonprod, with test apps injected into `standalone` (trimmed):
+
+```
+App chart preflight  nonprod.venus.onglueops.rocks  context k3d-captain  argocd v3.4.12+590e562
+Target per ApplicationSet · 5 ApplicationSets · 34 apps checked in 9s
+
+APPLICATIONSET           SOURCE  CURRENT      TARGET                      STATUS  APPS  OK  DIFF  ERROR  UNKNOWN  SKIPPED
+nonprod-application-set  git     v0.12.0-rc1  fix/container-args-quoting  ok        14  14     0      0        0        0
+pf-helm-set              helm    0.16.1       0.17.1                      ok         2   2     0      0        0        0
+standalone               -       -            fix/container-args-quoting  error     14   0     2      1        0       11
+
+standalone — ERROR: the target does not render for these apps; fix the values first
+
+  Changes (command/args items, current chart -> target)
+  APP               SYNC       RESOURCE                     CONTAINER         FIELD    IMPACT  OLD          NEW              HINT
+  pf-inject-padded  OutOfSync  Deployment/pf-inject-padded  pf-inject-padded  args[0]  roll    "padded"     "  padded  "     leading/trailing spaces are preserved from the target revis…
+  pf-inject-quoted  OutOfSync  Deployment/pf-inject-quoted  pf-inject-quoted  args[0]  break   "echo a: b"  "\"echo a: b\""  the item is wrapped in a second pair of quotes; 0.17.x stri…
+
+  Render errors
+  APP            NAMESPACE  SYNC       REASON
+  pf-inject-map  nonprod    OutOfSync  deployment.args: every item must be a string (got map) - quote the item in your values file; null, map and li…
+
+  11 skipped: target "fix/container-args-quoting" is not a chart version; a helm-sourced chart needs X.Y.Z
+
+Pod template diffs (current chart -> target, chart-version labels left out)
+
+standalone / pf-inject-quoted
+--- Deployment/pf-inject-quoted @ v0.17.1
++++ Deployment/pf-inject-quoted @ fix/container-args-quoting
+@@ -6,7 +6,7 @@
+ spec:
+   containers:
+   - args:
+-    - 'echo a: b'
++    - '"echo a: b"'
+     command:
+
+Verdict
+  Do NOT bump: standalone (2 diff, 1 error)
+  Safe to bump: nonprod-application-set, pf-helm-set
+```
+
+Values are quoted so quotes, spaces and empty strings show. `IMPACT` is `break` (the pod gets an
+argument it did not get before and the command fails), `roll` (the pods restart with a changed
+argument) or `none`. The diff is built from the two renders the check already made; labels and
+annotations that carry the chart version are left out, because they change on every bump. Progress
+and errors go to stderr.
+
+How it runs: the operator's kubeconfig is copied to a temporary directory, reduced to the one
+context, with its namespace set to Argo CD's. Exec auth plugins are kept. The same local Argo CD
+server as the CronJob is started with it, and both are removed when the command ends.
 
 ## What a run does
 
@@ -150,10 +244,10 @@ Three design choices keep it this small, and each has a measured reason:
 If the repo-server restarts mid-run, the agent restarts its local server and retries. That was
 tested on venus with no app lost.
 
-## Run it from a workstation (against a captain you can reach with kubectl)
+## Run the CronJob path from a workstation (development)
 
-Copy your kubeconfig, set its context namespace to Argo CD's, point the agent at it and the `argocd`
-CLI on your PATH, keep the report local:
+Operator mode is the way to run it by hand. To exercise the job's own path (ConfigMap and POST
+turned off, report printed), set its environment instead of flags:
 
 ```bash
 kubectl config view --raw > /tmp/kc-captain && KUBECONFIG=/tmp/kc-captain kubectl config set-context --current --namespace=glueops-core
@@ -161,10 +255,8 @@ go build -o bin/preflight . && KUBECONFIG=/tmp/kc-captain ARGOCD_BIN=$(which arg
   CAPTAIN_DOMAIN=nonprod.venus.onglueops.rocks TARGET_REVISION=v0.18.0 INGEST_URL= STATUS_CONFIGMAP= DEV_MODE=true ./bin/preflight
 ```
 
-In production nothing is run by hand: set `target_revision` in the captain's `platform.yaml`, let
-the CronJob run (or `kubectl -n glueops-core-argocd-app-chart-preflight create job --from=cronjob/argocd-app-chart-preflight-check preflight-now`),
-read the verdict (`kubectl -n glueops-core-argocd-app-chart-preflight get cm app-chart-preflight-status -o jsonpath='{.data.status}'`,
-Loki, or the fleet dashboard), bump the ApplicationSet only when the set is `ok`.
+Without flags the binary runs as the job when `CAPTAIN_DOMAIN` is set or a ServiceAccount token is
+mounted; otherwise it prints the operator usage.
 
 ## Development
 
@@ -182,9 +274,12 @@ tests run on them. The report schema is closed: adding a field means editing `in
 ## Layout
 
 ```
-main.go              entrypoint: config → kubeconfig → run → outputs; always exits 0 once running
+main.go              entrypoint: picks the mode; the CronJob path (config → kubeconfig → run → outputs, always exits 0)
+operator.go          operator mode: flags → one-context kubeconfig → preflight → text report → exit code
+internal/cli         operator flags, exit codes, which mode to run
+internal/textreport  the operator's tables, values, pod-template diff and verdict
 internal/agent       one run: discover → per-app check (semaphore) → per-set roll-up → ConfigMap/POST/summary
-internal/argocd      the CLI runner (exec, timeout), core-mode client, in-cluster kubeconfig
+internal/argocd      the CLI runner (exec, timeout), local server client, in-cluster and operator kubeconfigs
 internal/manifests   rendered YAML stream → pod templates (YAML 1.1 types preserved)
 internal/discover    ApplicationSets/apps → groups; the three chart-source forms; target validation
 internal/compare     pod-template compare: command/args findings + other_changes paths
