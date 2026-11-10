@@ -130,12 +130,16 @@ func TestFindingsFlatten(t *testing.T) {
 	if len(f) != 2 {
 		t.Fatalf("findings = %d", len(f))
 	}
-	want := FindingLine{Resource: "Deployment/keda-demo-newrelic", Container: "keda-demo-newrelic", ContainerType: schema.ContainersKey, Field: schema.FieldArgs, Index: "0", Old: "set -e && run", New: `"set -e && run"`, Category: schema.CategoryDoubleQuoted, Impact: schema.ImpactBreak}
+	want := FindingLine{Resource: "Deployment/keda-demo-newrelic", Container: "keda-demo-newrelic", ContainerType: schema.ContainersKey, Field: schema.FieldArgs, Index: "0", Old: "set -e && run", New: `"set -e && run"`, Category: schema.CategoryDoubleQuoted, Impact: schema.ImpactBreak, Hint: "remove the outer quotes"}
 	if !reflect.DeepEqual(f[0], want) {
 		t.Errorf("first = %+v", f[0])
 	}
 	if f[1].Index != "2" || f[1].Impact != schema.ImpactNone {
 		t.Errorf("second = %+v", f[1])
+	}
+	// The hint is for the text report only; log lines keep their shape.
+	if b, _ := json.Marshal(f[0]); strings.Contains(string(b), "hint") {
+		t.Errorf("hint reached the log encoding: %s", b)
 	}
 }
 

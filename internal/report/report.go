@@ -100,6 +100,8 @@ type FindingLine struct {
 	New           any    `json:"new"`
 	Category      string `json:"category"`
 	Impact        string `json:"impact"`
+	// Hint is for the operator's text report; log lines leave it out.
+	Hint string `json:"-"`
 }
 
 // Findings flattens an app's diff map in a stable order (for log lines and tests).
@@ -134,7 +136,7 @@ func Findings(app *schema.App) []FindingLine {
 					sort.Strings(idx)
 					for _, i := range idx {
 						f := field.m[i]
-						out = append(out, FindingLine{Resource: res, Container: n, ContainerType: typ.name, Field: field.name, Index: i, Old: f.Old, New: f.New, Category: f.Category, Impact: f.Impact})
+						out = append(out, FindingLine{Resource: res, Container: n, ContainerType: typ.name, Field: field.name, Index: i, Old: f.Old, New: f.New, Category: f.Category, Impact: f.Impact, Hint: f.Hint})
 					}
 				}
 			}
