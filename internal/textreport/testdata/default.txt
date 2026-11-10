@@ -30,6 +30,7 @@ previews-application-set — UNKNOWN: no verdict for these apps; check the reaso
   flaky  nonprod    Synced  argocd app manifests (target) failed: dial tcp: connection refused
 
 standalone — SKIPPED: not checked
+
   2 skipped: target "v0.18.0" is a git ref; this app sources the chart from a Helm repository and needs X.Y.Z
 
 Pod template diffs (current chart -> target, chart-version labels left out)

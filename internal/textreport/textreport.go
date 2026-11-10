@@ -361,7 +361,11 @@ func (p *printer) findings(apps []*schema.App) {
 		if n := len(a.OtherChanges); n > 0 {
 			extra = fmt.Sprintf("; also changes other pod-template fields in %d resource(s), see the diff", n)
 		}
-		p.printf("  %s (namespace %s) values: %s%s\n", p.c(dim, a.Name), a.Namespace, strings.Join(a.ValuesFiles, ", "), extra)
+		files := strings.Join(a.ValuesFiles, ", ")
+		if files == "" {
+			files = "none listed (inline helm values in the Application)"
+		}
+		p.printf("  %s (namespace %s) values: %s%s\n", p.c(dim, a.Name), a.Namespace, files, extra)
 	}
 }
 
@@ -379,6 +383,7 @@ func (p *printer) reasons(title string, apps []*schema.App) {
 }
 
 func (p *printer) skippedSummary(apps []*schema.App) {
+	p.printf("\n")
 	counts := map[string]int{}
 	for _, a := range apps {
 		r := "skipped"

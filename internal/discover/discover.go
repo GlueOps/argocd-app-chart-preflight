@@ -243,9 +243,16 @@ func Discover(in Input) Output {
 	}
 
 	standalone := &Group{Name: Standalone, Apps: []App{}}
-	if in.TargetRevision != "" {
-		standalone.TargetRevision = schema.Str(in.TargetRevision)
-	} else {
+	saTarget, saOverridden := in.Targets[Standalone]
+	if !saOverridden {
+		saTarget = in.TargetRevision
+	}
+	switch {
+	case saTarget != "":
+		standalone.TargetRevision = schema.Str(saTarget)
+	case saOverridden:
+		standalone.SkipReason = "skipped by targets override"
+	default:
 		standalone.SkipReason = "no target revision configured"
 	}
 	var ignored, excludedApps int

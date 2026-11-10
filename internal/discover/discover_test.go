@@ -236,4 +236,14 @@ func TestDiscoverOnly(t *testing.T) {
 	if len(out.Groups) != 1 || out.Groups[0].Name != Standalone || out.Groups[0].Apps[0].Name != "hand-made" || out.Excluded != 3 {
 		t.Errorf("standalone only = %+v, excluded %d", out.Groups, out.Excluded)
 	}
+	// A per-set target for standalone applies like any other set's.
+	in.TargetRevision, in.Targets = "", map[string]string{Standalone: "0.18.0"}
+	out = Discover(in)
+	if sa := out.Groups[0]; sa.TargetRevision == nil || *sa.TargetRevision != "0.18.0" || sa.SkipReason != "" {
+		t.Errorf("standalone target override = %+v", sa)
+	}
+	in.TargetRevision, in.Targets = "v0.18.0", map[string]string{Standalone: ""}
+	if sa := Discover(in).Groups[0]; sa.SkipReason != "skipped by targets override" {
+		t.Errorf("standalone skip override = %+v", sa)
+	}
 }
