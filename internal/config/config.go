@@ -32,6 +32,9 @@ type Config struct {
 	TargetRevision string
 	// Targets is the per-ApplicationSet override; an empty value skips that set.
 	Targets map[string]string
+	// OnlyAppSets restricts the run to these sets (operator mode's --appset).
+	// Empty means every set; the job never sets it.
+	OnlyAppSets []string
 	// Concurrency is the number of parallel per-app checks.
 	Concurrency int
 	// RunTimeout is when the run stops starting work and reports what it has;

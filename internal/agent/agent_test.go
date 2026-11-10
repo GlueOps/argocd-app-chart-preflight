@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -508,5 +509,53 @@ func TestNewRunID(t *testing.T) {
 	id := NewRunID(time.Date(2026, 11, 4, 10, 0, 0, 12345, time.UTC))
 	if !strings.HasPrefix(id, "20261104100000_") || len(id) != 23 {
 		t.Errorf("id = %q", id)
+	}
+}
+
+func TestPreflightProgressRendersAndOnly(t *testing.T) {
+	apps := []map[string]any{
+		application("clean", set, []any{gitChartSrc("v0.17.1"), venusValuesSrc}, nil, ""),
+		application("quoted", set, []any{gitChartSrc("v0.17.1"), venusValuesSrc}, nil, ""),
+		application("other", "other-set", []any{gitChartSrc("v0.17.1"), venusValuesSrc}, nil, ""),
+	}
+	s := &scripted{routes: []route{
+		{is("version"), ok(`{"client":{"Version":"v3.2.12"}}`)},
+		{is("appset", "list"), ok(jsonList(applicationSet(set, gitChartSrc("v0.17.1")), applicationSet("other-set", gitChartSrc("v0.17.1"))))},
+		{is("app", "list"), ok(jsonList(apps...))},
+		{hasApp("manifests", "clean"), ok(deployment("clean", []any{"x"}))},
+		{hasApp("manifests", "quoted"), func(a []string) argocd.Result {
+			if withRevision(a) {
+				return argocd.Result{Code: 0, Stdout: []byte(deployment("quoted", []any{`"echo a: b"`}))}
+			}
+			return argocd.Result{Code: 0, Stdout: []byte(deployment("quoted", []any{"echo a: b"}))}
+		}},
+	}}
+	d := deps(s)
+	var progress []int
+	renders := map[string][2]int{}
+	d.Progress = func(done, total int) {
+		if total != 2 {
+			t.Errorf("total = %d, want 2 (other-set left out)", total)
+		}
+		progress = append(progress, done)
+	}
+	d.Renders = func(appSet, app string, current, target []manifests.PodTemplate) {
+		renders[appSet+"/"+app] = [2]int{len(current), len(target)}
+	}
+	c := cfg("v0.18.0")
+	c.OnlyAppSets = []string{set}
+	rep, err := Preflight(context.Background(), c, d, logging.New("info", io.Discard), "r", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.AppSets) != 1 || rep.AppSets[0].Name != set {
+		t.Fatalf("sets = %+v", rep.AppSets)
+	}
+	if !reflect.DeepEqual(progress, []int{1, 2}) {
+		t.Errorf("progress = %v", progress)
+	}
+	// Only the diff app hands its renders over; the clean one does not.
+	if !reflect.DeepEqual(renders, map[string][2]int{set + "/quoted": {1, 1}}) {
+		t.Errorf("renders = %v", renders)
 	}
 }

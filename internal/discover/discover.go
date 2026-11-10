@@ -190,6 +190,10 @@ type Input struct {
 	Applications    []map[string]any
 	TargetRevision  string
 	Targets         map[string]string // per-set override; "" skips the set
+	// Only restricts the run to these ApplicationSet names (Standalone included
+	// only when named). Empty means every set. Apps of a set left out are not
+	// checked and not counted as ignored.
+	Only []string
 }
 
 // Output of Discover. Ignored counts Applications that do not use the app
@@ -197,11 +201,18 @@ type Input struct {
 type Output struct {
 	Groups  []Group
 	Ignored int
+	// Excluded counts the apps of sets left out by Input.Only.
+	Excluded int
 }
 
 // Discover groups Applications by ApplicationSet.
 func Discover(in Input) Output {
 	groups := map[string]*Group{}
+	only := map[string]bool{}
+	for _, n := range in.Only {
+		only[n] = true
+	}
+	excluded := map[string]bool{}
 	for _, raw := range in.ApplicationSets {
 		name := str(obj(raw["metadata"]), "name")
 		if name == "" {
@@ -210,6 +221,10 @@ func Discover(in Input) Output {
 		chart := ChartSourceOf(obj(obj(obj(raw["spec"])["template"])["spec"]))
 		if chart == nil {
 			continue // a set for something other than the app chart
+		}
+		if len(only) > 0 && !only[name] {
+			excluded[name] = true
+			continue
 		}
 		target, overridden := in.Targets[name]
 		if !overridden {
@@ -233,22 +248,29 @@ func Discover(in Input) Output {
 	} else {
 		standalone.SkipReason = "no target revision configured"
 	}
-	var ignored int
+	var ignored, excludedApps int
+	keepStandalone := len(only) == 0 || only[Standalone]
 	for _, raw := range in.Applications {
 		app := ToApp(raw)
 		if app == nil {
 			continue
 		}
+		if app.AppSet != "" && excluded[app.AppSet] {
+			excludedApps++
+			continue
+		}
 		if owner := groups[app.AppSet]; app.AppSet != "" && owner != nil {
 			owner.Apps = append(owner.Apps, *app)
-		} else if app.Chart != nil {
+		} else if app.Chart != nil && keepStandalone {
 			standalone.Apps = append(standalone.Apps, *app)
+		} else if app.Chart != nil {
+			excludedApps++
 		} else {
 			ignored++
 		}
 	}
 
-	out := Output{Ignored: ignored}
+	out := Output{Ignored: ignored, Excluded: excludedApps}
 	names := make([]string, 0, len(groups))
 	for n := range groups {
 		names = append(names, n)

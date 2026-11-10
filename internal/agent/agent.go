@@ -1,8 +1,7 @@
 // Package agent runs one preflight: discover → check every app (bounded
 // parallelism) → roll up per ApplicationSet → emit (ConfigMap, log lines,
-// receiver). Per app: `app diff --exit-code` first (exit 0 ⇒ ok, no renders);
-// only an app that differs pays for the two `app manifests` renders and the
-// structural compare that yields old/new values.
+// receiver). Per app: two `app manifests` renders, current and target, and
+// the structural compare that yields old/new values.
 package agent
 
 import (
@@ -46,6 +45,13 @@ type Deps struct {
 	Version      string
 	Commit       string
 	Now          func() time.Time
+	// Progress, when set, is called after each app check with the count done
+	// and the total (operator mode's progress line). Calls are serialized.
+	Progress func(done, total int)
+	// Renders, when set, receives the two reduced renders of every app whose
+	// status is diff or ok-noop-diff, for operator mode's text diff. They are
+	// not part of the report.
+	Renders func(appSet, app string, current, target []manifests.PodTemplate)
 }
 
 // Summary is the one "run summary" log line every run ends with.
@@ -190,7 +196,7 @@ func Preflight(ctx context.Context, cfg config.Config, deps Deps, log *slog.Logg
 		return nil, err
 	}
 	cli := deps.Argocd.ClientVersion(ctx)
-	disc := discover.Discover(discover.Input{ApplicationSets: appSets, Applications: apps, TargetRevision: cfg.TargetRevision, Targets: cfg.Targets})
+	disc := discover.Discover(discover.Input{ApplicationSets: appSets, Applications: apps, TargetRevision: cfg.TargetRevision, Targets: cfg.Targets, Only: cfg.OnlyAppSets})
 
 	type work struct {
 		group *discover.Group
@@ -206,6 +212,7 @@ func Preflight(ctx context.Context, cfg config.Config, deps Deps, log *slog.Logg
 		}
 	}
 	var mu sync.Mutex
+	var done int
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, max(1, cfg.Concurrency))
 	for _, w := range items {
@@ -214,13 +221,20 @@ func Preflight(ctx context.Context, cfg config.Config, deps Deps, log *slog.Logg
 		go func(w work) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			a := CheckApp(ctx, cfg, deps.Argocd, w.group, w.app)
+			a, current, target := checkApp(ctx, cfg, deps.Argocd, w.group, w.app)
 			if a.Status != schema.AppOK {
 				log.Info("app", "appset", w.group.Name, "app", a.Name, "namespace", a.Namespace, "status", a.Status, "sync_status", deref(a.SyncStatus), "reason", deref(a.Reason),
 					"current", deref(a.CurrentRevision), "target", deref(w.group.TargetRevision), "values_files", a.ValuesFiles, "findings", report.Findings(&a), "other_changes", len(a.OtherChanges))
 			}
 			mu.Lock()
 			results[w.group.Name] = append(results[w.group.Name], a)
+			done++
+			if deps.Renders != nil && (a.Status == schema.AppDiff || a.Status == schema.AppOKNoopDiff) {
+				deps.Renders(w.group.Name, a.Name, current, target)
+			}
+			if deps.Progress != nil {
+				deps.Progress(done, len(items))
+			}
 			mu.Unlock()
 		}(w)
 	}
@@ -251,10 +265,17 @@ func Preflight(ctx context.Context, cfg config.Config, deps Deps, log *slog.Logg
 
 // CheckApp produces one app's verdict.
 func CheckApp(ctx context.Context, cfg config.Config, cli argocd.Client, g *discover.Group, app discover.App) schema.App {
+	a, _, _ := checkApp(ctx, cfg, cli, g, app)
+	return a
+}
+
+// checkApp is CheckApp that also returns the two reduced renders when it got
+// that far (nil otherwise).
+func checkApp(ctx context.Context, cfg config.Config, cli argocd.Client, g *discover.Group, app discover.App) (schema.App, []manifests.PodTemplate, []manifests.PodTemplate) {
 	r := schema.NewApp(app.Name, app.Namespace)
 	r.SyncStatus = app.SyncStatus
 	if app.Chart == nil {
-		return withStatus(r, schema.AppSkipped, "source is not the app chart")
+		return withStatus(r, schema.AppSkipped, "source is not the app chart"), nil, nil
 	}
 	r.CurrentRevision = schema.Str(app.Chart.Revision)
 	r.ValuesFiles = append([]string{}, app.Chart.ValuesFiles...)
@@ -264,10 +285,10 @@ func CheckApp(ctx context.Context, cfg config.Config, cli argocd.Client, g *disc
 		if reason == "" {
 			reason = "no target revision configured"
 		}
-		return withStatus(r, schema.AppSkipped, reason)
+		return withStatus(r, schema.AppSkipped, reason), nil, nil
 	}
 	if g.UnknownReason != "" {
-		return withStatus(r, schema.AppUnknown, g.UnknownReason)
+		return withStatus(r, schema.AppUnknown, g.UnknownReason), nil, nil
 	}
 	// standalone mixes source types (tenant git-sourced apps next to platform apps
 	// from helm.gpkg.io): a target of the wrong kind for *this* app is skipped with
@@ -275,11 +296,11 @@ func CheckApp(ctx context.Context, cfg config.Config, cli argocd.Client, g *disc
 	// platform app's bump is a platform-chart release anyway.
 	if g.SourceType == nil {
 		if bad := discover.ValidateTarget(app.Chart.Type, target); bad != "" {
-			return withStatus(r, schema.AppSkipped, bad)
+			return withStatus(r, schema.AppSkipped, bad), nil, nil
 		}
 	}
 	if g.CurrentRevision != nil && app.Chart.Revision != *g.CurrentRevision {
-		return withStatus(r, schema.AppUnknown, fmt.Sprintf("revision drift from ApplicationSet: app pins %q, template pins %q", app.Chart.Revision, *g.CurrentRevision))
+		return withStatus(r, schema.AppUnknown, fmt.Sprintf("revision drift from ApplicationSet: app pins %q, template pins %q", app.Chart.Revision, *g.CurrentRevision)), nil, nil
 	}
 
 	// Two renders, no `app diff` first: a chart version bump always changes the
@@ -288,29 +309,29 @@ func CheckApp(ctx context.Context, cfg config.Config, cli argocd.Client, g *disc
 	oldR := cli.Manifests(ctx, app.Name, nil)
 	newR := cli.Manifests(ctx, app.Name, &argocd.Override{Ref: app.Chart.Ref, Revision: target})
 	if ctx.Err() != nil && (oldR.Code != 0 || newR.Code != 0) {
-		return withStatus(r, schema.AppUnknown, stoppedReason(ctx))
+		return withStatus(r, schema.AppUnknown, stoppedReason(ctx)), nil, nil
 	}
 	if newR.Code != 0 && !newR.TimedOut && argocd.ChartRenderErrorRE.Match(newR.Stderr) {
-		return withStatus(r, schema.AppError, argocd.ChartErrorReason(newR.Stderr))
+		return withStatus(r, schema.AppError, argocd.ChartErrorReason(newR.Stderr)), nil, nil
 	}
 	for _, side := range []struct {
 		name string
 		res  argocd.Result
 	}{{"current", oldR}, {"target", newR}} {
 		if side.res.TimedOut {
-			return withStatus(r, schema.AppUnknown, fmt.Sprintf("argocd app manifests (%s) timed out", side.name))
+			return withStatus(r, schema.AppUnknown, fmt.Sprintf("argocd app manifests (%s) timed out", side.name)), nil, nil
 		}
 		if side.res.Code != 0 {
-			return withStatus(r, schema.AppUnknown, fmt.Sprintf("argocd app manifests (%s) failed: %s", side.name, argocd.StderrReason(side.res.Stderr)))
+			return withStatus(r, schema.AppUnknown, fmt.Sprintf("argocd app manifests (%s) failed: %s", side.name, argocd.StderrReason(side.res.Stderr))), nil, nil
 		}
 	}
 	oldT, err := manifests.ParseAndReduce(oldR.Stdout)
 	if err != nil {
-		return withStatus(r, schema.AppUnknown, "could not parse rendered manifests: "+err.Error())
+		return withStatus(r, schema.AppUnknown, "could not parse rendered manifests: "+err.Error()), nil, nil
 	}
 	newT, err := manifests.ParseAndReduce(newR.Stdout)
 	if err != nil {
-		return withStatus(r, schema.AppUnknown, "could not parse rendered manifests: "+err.Error())
+		return withStatus(r, schema.AppUnknown, "could not parse rendered manifests: "+err.Error()), nil, nil
 	}
 	c := compare.Compare(oldT, newT)
 	r.Diff = c.Diff
@@ -328,7 +349,7 @@ func CheckApp(ctx context.Context, cfg config.Config, cli argocd.Client, g *disc
 			}
 		}
 	}
-	return r
+	return r, oldT, newT
 }
 
 // stoppedReason says why an app has no verdict, so a partial report reads as

@@ -209,3 +209,31 @@ func TestValidateTargetHintOnlyWhenItLooksLikeAVersion(t *testing.T) {
 		t.Errorf("vX.Y.Z should suggest X.Y.Z: %q", r)
 	}
 }
+
+func TestDiscoverOnly(t *testing.T) {
+	in := Input{
+		ApplicationSets: []map[string]any{applicationSet("a-set", gitChartSrc("v0.17.1")), applicationSet("b-set", gitChartSrc("v0.17.1"))},
+		Applications: []map[string]any{
+			application(appOpts{name: "a1", appSet: "a-set", sources: []any{gitChartSrc("v0.17.1"), venusValuesSrc}}),
+			application(appOpts{name: "b1", appSet: "b-set", sources: []any{gitChartSrc("v0.17.1"), venusValuesSrc}}),
+			application(appOpts{name: "b2", appSet: "b-set", sources: []any{gitChartSrc("v0.17.1"), venusValuesSrc}}),
+			application(appOpts{name: "hand-made", sources: []any{helmChartSrc("0.16.1"), venusValuesSrc}}),
+			application(appOpts{name: "platform-thing", source: map[string]any{"repoURL": "https://helm.gpkg.io/platform", "chart": "x"}}),
+		},
+		TargetRevision: "v0.18.0",
+		Only:           []string{"a-set"},
+	}
+	out := Discover(in)
+	if len(out.Groups) != 1 || out.Groups[0].Name != "a-set" || len(out.Groups[0].Apps) != 1 {
+		t.Fatalf("groups = %+v", out.Groups)
+	}
+	// b-set's two apps and the standalone app are left out, not counted as ignored.
+	if out.Excluded != 3 || out.Ignored != 1 {
+		t.Errorf("excluded = %d, ignored = %d; want 3 and 1", out.Excluded, out.Ignored)
+	}
+	in.Only = []string{Standalone}
+	out = Discover(in)
+	if len(out.Groups) != 1 || out.Groups[0].Name != Standalone || out.Groups[0].Apps[0].Name != "hand-made" || out.Excluded != 3 {
+		t.Errorf("standalone only = %+v, excluded %d", out.Groups, out.Excluded)
+	}
+}
