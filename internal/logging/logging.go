@@ -24,8 +24,8 @@ const (
 	ReasonInternalError         = "internal_error"
 )
 
-// Component is attached to every log line so Loki queries and the alert rule in
-// platform-helm-chart-platform can select this agent without knowing the pod name.
+// Component is attached to every log line so Loki queries can select this agent
+// without knowing the pod name.
 const Component = "argocd-app-chart-preflight"
 
 // TimeLayout is the RFC 3339 UTC millisecond layout used everywhere.

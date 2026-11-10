@@ -37,7 +37,14 @@ type Options struct {
 	// (the default when empty) sets "Content-Encoding: gzip"; EncodingIdentity
 	// sends the body as-is with no Content-Encoding header.
 	Encoding string
+	// ContentType of the body; the default is ContentTypeYAML — the preflight
+	// report travels as the same YAML document the ConfigMap holds, and the
+	// receiver converts it.
+	ContentType string
 }
+
+// ContentTypeYAML is the report's wire format.
+const ContentTypeYAML = "application/yaml"
 
 // Body encodings.
 const (
@@ -77,6 +84,9 @@ func New(opts Options) *Sender {
 	}
 	if opts.Encoding == "" {
 		opts.Encoding = EncodingGzip
+	}
+	if opts.ContentType == "" {
+		opts.ContentType = ContentTypeYAML
 	}
 	return &Sender{
 		opts: opts,
@@ -126,7 +136,7 @@ func (s *Sender) post(ctx context.Context, body []byte) (int, error) {
 		// config, so only say that building the request failed.
 		return 0, errors.New("building request failed")
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", s.opts.ContentType)
 	if s.opts.Encoding == EncodingGzip {
 		req.Header.Set("Content-Encoding", "gzip")
 	}

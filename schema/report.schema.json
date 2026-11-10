@@ -1,0 +1,123 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/GlueOps/argocd-app-chart-preflight/schema/report.schema.json",
+  "title": "argocd-app-chart-preflight report",
+  "description": "One run of the per-captain pre-bump gate for the GlueOps `app` chart. Mirrors internal/schema/schema.go (the tests there keep them in sync). Closed at every level: a new field is a schema_version bump.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run", "summary", "appsets"],
+  "properties": {
+    "schema_version": { "type": "integer", "enum": [1] },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "captain_domain", "target_revision", "argocd_cli_version", "agent_version", "agent_commit", "started_at", "finished_at", "status"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[0-9]{14}_[0-9a-f]{8}$" },
+        "captain_domain": { "type": "string", "minLength": 1 },
+        "target_revision": { "type": ["string", "null"] },
+        "argocd_cli_version": { "type": ["string", "null"] },
+        "agent_version": { "type": "string" },
+        "agent_commit": { "type": "string" },
+        "started_at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$" },
+        "finished_at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$" },
+        "status": { "$ref": "#/$defs/group_status" }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["appsets", "ok", "diff", "error", "unknown", "skipped", "apps_ignored"],
+      "properties": {
+        "appsets": { "type": "integer", "minimum": 0 },
+        "ok": { "type": "integer", "minimum": 0 },
+        "diff": { "type": "integer", "minimum": 0 },
+        "error": { "type": "integer", "minimum": 0 },
+        "unknown": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 },
+        "apps_ignored": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "appsets": { "type": "array", "items": { "$ref": "#/$defs/appset" } }
+  },
+  "$defs": {
+    "group_status": { "type": "string", "enum": ["ok", "diff", "error", "unknown", "skipped"] },
+    "app_status": { "type": "string", "enum": ["ok", "ok-noop-diff", "diff", "error", "unknown", "skipped"] },
+    "source_type": { "type": ["string", "null"], "enum": ["helm", "oci", "git", null] },
+    "appset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "source_type", "current_revision", "target_revision", "status", "reason", "summary", "apps"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "source_type": { "$ref": "#/$defs/source_type" },
+        "current_revision": { "type": ["string", "null"] },
+        "target_revision": { "type": ["string", "null"] },
+        "status": { "$ref": "#/$defs/group_status" },
+        "reason": { "type": ["string", "null"] },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["apps", "ok", "ok-noop-diff", "diff", "error", "unknown", "skipped"],
+          "properties": {
+            "apps": { "type": "integer", "minimum": 0 },
+            "ok": { "type": "integer", "minimum": 0 },
+            "ok-noop-diff": { "type": "integer", "minimum": 0 },
+            "diff": { "type": "integer", "minimum": 0 },
+            "error": { "type": "integer", "minimum": 0 },
+            "unknown": { "type": "integer", "minimum": 0 },
+            "skipped": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "apps": { "type": "array", "items": { "$ref": "#/$defs/app" } }
+      }
+    },
+    "app": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "namespace", "current_revision", "status", "sync_status", "reason", "values_files", "diff", "other_changes", "argocd_diff"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "namespace": { "type": "string" },
+        "current_revision": { "type": ["string", "null"] },
+        "status": { "$ref": "#/$defs/app_status" },
+        "sync_status": { "type": ["string", "null"] },
+        "reason": { "type": ["string", "null"] },
+        "values_files": { "type": "array", "items": { "type": "string" } },
+        "diff": { "type": "object", "additionalProperties": { "$ref": "#/$defs/resource_diff" } },
+        "other_changes": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } },
+        "argocd_diff": { "type": ["string", "null"] }
+      }
+    },
+    "resource_diff": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "containers": { "$ref": "#/$defs/containers_diff" },
+        "initContainers": { "$ref": "#/$defs/containers_diff" }
+      }
+    },
+    "containers_diff": { "type": "object", "additionalProperties": { "$ref": "#/$defs/container_diff" } },
+    "container_diff": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": { "$ref": "#/$defs/field_diff" },
+        "args": { "$ref": "#/$defs/field_diff" }
+      }
+    },
+    "field_diff": { "type": "object", "additionalProperties": { "$ref": "#/$defs/finding" } },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["old", "new", "category", "impact", "hint"],
+      "properties": {
+        "old": { "description": "The item as the current chart renders it: a string, or on 0.17.x a retyped scalar/map; null when absent or null" },
+        "new": { "description": "The item as the target chart renders it" },
+        "category": { "type": "string", "enum": ["null_item", "double_quoted", "comment_truncated", "leading_hash", "padded", "retyped", "length_changed", "other"] },
+        "impact": { "type": "string", "enum": ["none", "roll", "break"] },
+        "hint": { "type": "string" }
+      }
+    }
+  }
+}

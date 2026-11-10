@@ -117,8 +117,15 @@ func validateJSON(root jsonSchema, s jsonSchema, v any, path string) []string {
 		for k, val := range obj {
 			sub, declared := props[k]
 			if !declared {
-				if ap, ok := s["additionalProperties"].(bool); ok && !ap {
-					fail("additional property %q not allowed", k)
+				switch ap := s["additionalProperties"].(type) {
+				case bool:
+					if !ap {
+						fail("additional property %q not allowed", k)
+					}
+				case map[string]any:
+					// Map-shaped objects (diff keyed by resource/container/index):
+					// every value validates against the additionalProperties schema.
+					errs = append(errs, validateJSON(root, ap, val, path+"."+k)...)
 				}
 				continue
 			}
